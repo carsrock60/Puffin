@@ -14,6 +14,8 @@ The PWA sends a download request to a private service running on a Raspberry Pi.
 
 The Raspberry Pi service is intended to be reachable only over a private network. Tailscale must be installed and connected on the Pi and on each Mac or iPhone that will request downloads. If the Pi or private connection is unavailable, new downloads cannot be requested; files already saved on a device remain available offline.
 
+The Pi service setup, including Raspberry Pi OS commands, Tailscale Serve, and an optional systemd service for automatic startup, is documented in [pi-service/README.md](pi-service/README.md). Set `PUFFIN_ALLOWED_ORIGINS` there to the exact Vercel deployment origin and any local development origin you use. The Pi stores downloads only temporarily; Puffin stores each completed file in the requesting device's browser storage.
+
 ## Edit
 
 The Edit tab is a music tag editor with the following features:

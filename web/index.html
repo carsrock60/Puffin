@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f6f7f8" />
+    <meta
+      name="description"
+      content="Puffin is a simple music and video player."
+    />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <link rel="icon" href="/icons/puffin-192.png" type="image/png" />
+    <link rel="apple-touch-icon" href="/icons/puffin-180.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <title>Puffin — A Music Player</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+    <script type="module" src="/src/main.js"></script>
+  </head>
+  <body>
+    <div class="app">
+      <aside class="sidebar" aria-label="Main navigation">
+        <p class="brand">Puffin</p>
+        <nav class="nav-list" aria-label="Sections">
+          <button class="nav-button" type="button" data-tab="download">
+            <span class="nav-icon" aria-hidden="true">↓</span><span>Download</span>
+          </button>
+          <button class="nav-button" type="button" data-tab="edit">
+            <span class="nav-icon" aria-hidden="true">✎</span><span>Edit</span>
+          </button>
+          <button class="nav-button" type="button" data-tab="play">
+            <span class="nav-icon" aria-hidden="true">▶</span><span>Play</span>
+          </button>
+          <button class="nav-button" type="button" data-tab="stats">
+            <span class="nav-icon" aria-hidden="true">▤</span><span>Stats</span>
+          </button>
+        </nav>
+        <div class="sidebar-bottom">
+          <button class="icon-button" type="button" aria-label="Settings" title="Settings">⚙</button>
+        </div>
+      </aside>
+
+      <div class="workspace">
+        <header class="topbar">
+          <button class="icon-button" id="theme-toggle" type="button" aria-label="Toggle dark mode" aria-pressed="false" title="Toggle dark mode">☾</button>
+        </header>
+
+        <main>
+          <section class="welcome" id="home-panel" aria-labelledby="home-title">
+            <h1 id="home-title">Puffin: A Music Player</h1>
+            <p>Click an option to get started</p>
+          </section>
+
+          <section class="panel" id="download-panel" data-panel="download" aria-labelledby="download-title" hidden>
+            <h1 id="download-title">Download</h1>
+            <p class="muted">Download authorized YouTube audio or video through your private Raspberry Pi.</p>
+            <form id="download-form" class="download-form">
+              <div class="pi-connection-row">
+                <label class="form-field pi-address-field">
+                  <span>Pi address</span>
+                  <input id="pi-address" name="pi-address" type="url" inputmode="url" placeholder="https://pi-name.tailnet.ts.net" autocomplete="url" required />
+                </label>
+                <button class="secondary-button" id="check-pi" type="button">Check Pi</button>
+              </div>
+              <label class="form-field">
+                <span>YouTube link</span>
+                <input id="youtube-url" name="youtube-url" type="url" inputmode="url" placeholder="https://www.youtube.com/watch?v=…" autocomplete="url" required />
+              </label>
+              <label class="form-field format-field">
+                <span>Format</span>
+                <select id="download-kind" name="download-kind">
+                  <option value="audio">Audio · M4A</option>
+                  <option value="video">Video · MP4</option>
+                </select>
+              </label>
+              <button class="primary-button" id="start-download" type="submit">Download to Puffin</button>
+              <progress id="download-progress" max="100" value="0" hidden></progress>
+              <p id="download-status" class="muted" role="status" aria-live="polite">Connect the Pi with Tailscale to start a download.</p>
+            </form>
+          </section>
+
+          <section class="panel" id="edit-panel" data-panel="edit" aria-labelledby="edit-title" hidden>
+            <h1 id="edit-title">Edit</h1>
+            <ul class="placeholder-list">
+              <li>Batch edit music tags</li>
+              <li>Convert between filenames and tags with naming masks</li>
+              <li>Look up metadata online</li>
+            </ul>
+          </section>
+
+          <section class="panel" id="play-panel" data-panel="play" aria-labelledby="play-title" hidden>
+            <h1 id="play-title">Play</h1>
+            <p class="muted">Import media to this device's Puffin library for offline playback. Browser storage may be cleared through browser or device settings.</p>
+            <div class="library-toolbar">
+              <button class="primary-button" id="import-media" type="button">Import media</button>
+              <input id="media-files" type="file" accept="audio/*,video/*" multiple hidden />
+              <p id="library-status" class="muted" role="status" aria-live="polite">Loading your library…</p>
+            </div>
+            <p id="library-storage" class="storage-summary muted"></p>
+
+            <section id="media-player" class="media-player" aria-label="Media player" hidden>
+              <h2 id="current-media-title"></h2>
+              <audio id="audio-player" controls preload="metadata" hidden></audio>
+              <video id="video-player" controls playsinline preload="metadata" hidden></video>
+            </section>
+
+            <h2 class="library-heading">Your media</h2>
+            <ol id="media-list" class="media-list" aria-label="Imported media"></ol>
+          </section>
+
+          <section class="panel" id="stats-panel" data-panel="stats" aria-labelledby="stats-title" hidden>
+            <h1 id="stats-title">Stats</h1>
+            <p class="muted">Listening history and storage statistics will appear here.</p>
+          </section>
+        </main>
+      </div>
+    </div>
+
+  </body>
+</html>

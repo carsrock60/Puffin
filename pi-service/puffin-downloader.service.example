@@ -1,0 +1,19 @@
+[Unit]
+Description=Puffin private media downloader
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=REPLACE_ME
+Group=REPLACE_ME
+WorkingDirectory=/home/REPLACE_ME/Puffin/pi-service
+EnvironmentFile=/etc/puffin-downloader.env
+ExecStart=/home/REPLACE_ME/Puffin/pi-service/.venv/bin/python /home/REPLACE_ME/Puffin/pi-service/app.py
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
