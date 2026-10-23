@@ -10,7 +10,7 @@
     />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-    <link rel="icon" href="/icons/puffin-192.png" type="image/png" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/icons/puffin-180.png" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <title>Puffin — A Music Player</title>
@@ -36,13 +36,14 @@
           </button>
         </nav>
         <div class="sidebar-bottom">
-          <button class="icon-button" type="button" aria-label="Settings" title="Settings">⚙</button>
+          <button class="icon-button" id="settings-open" data-open-settings type="button" aria-label="Settings" title="Settings">⚙</button>
         </div>
       </aside>
 
       <div class="workspace">
         <header class="topbar">
           <button class="icon-button" id="theme-toggle" type="button" aria-label="Toggle dark mode" aria-pressed="false" title="Toggle dark mode">☾</button>
+          <button class="icon-button mobile-settings-button" data-open-settings type="button" aria-label="Settings" title="Settings">⚙</button>
         </header>
 
         <main>
@@ -62,15 +63,34 @@
                 </label>
                 <button class="secondary-button" id="check-pi" type="button">Check Pi</button>
               </div>
-              <label class="form-field">
+              <div class="download-source-switch" role="group" aria-label="Choose a YouTube source">
+                <button id="download-source-link" class="is-selected" type="button" aria-pressed="true">Paste a link</button>
+                <button id="download-source-browse" type="button" aria-pressed="false">Browse YouTube</button>
+              </div>
+              <label id="youtube-link-field" class="form-field">
                 <span>YouTube link</span>
                 <input id="youtube-url" name="youtube-url" type="url" inputmode="url" placeholder="https://www.youtube.com/watch?v=…" autocomplete="url" required />
               </label>
+              <section id="youtube-browse-panel" class="youtube-browse-panel" aria-label="Search YouTube" hidden>
+                <div class="youtube-search-row">
+                  <label class="form-field" for="youtube-search-query">
+                    <span>Search YouTube</span>
+                    <input id="youtube-search-query" type="search" maxlength="200" placeholder="Search videos" autocomplete="off" />
+                  </label>
+                  <button id="youtube-search-button" class="secondary-button" type="button">Search</button>
+                </div>
+                <p id="youtube-search-status" class="muted" role="status" aria-live="polite">Search YouTube, then choose a result to download.</p>
+                <div id="youtube-selected-video" class="youtube-selected-video" hidden>
+                  <span id="youtube-selected-title"></span>
+                  <button id="youtube-clear-selection" class="secondary-button" type="button">Choose another</button>
+                </div>
+                <ol id="youtube-search-results" class="youtube-search-results" aria-label="YouTube search results"></ol>
+              </section>
               <label class="form-field format-field">
                 <span>Format</span>
                 <select id="download-kind" name="download-kind">
-                  <option value="audio">Audio · M4A</option>
-                  <option value="video">Video · MP4</option>
+                  <option value="audio">Audio · AAC M4A · 192 kb/s target</option>
+                  <option value="video">Video · H.264/AAC MP4</option>
                 </select>
               </label>
               <button class="primary-button" id="start-download" type="submit">Download to Puffin</button>
@@ -90,22 +110,37 @@
 
           <section class="panel" id="play-panel" data-panel="play" aria-labelledby="play-title" hidden>
             <h1 id="play-title">Play</h1>
-            <p class="muted">Import media to this device's Puffin library for offline playback. Browser storage may be cleared through browser or device settings.</p>
+
             <div class="library-toolbar">
               <button class="primary-button" id="import-media" type="button">Import media</button>
               <input id="media-files" type="file" accept="audio/*,video/*" multiple hidden />
               <p id="library-status" class="muted" role="status" aria-live="polite">Loading your library…</p>
             </div>
-            <p id="library-storage" class="storage-summary muted"></p>
+            <div class="playlist-library">
+              <aside class="playlist-sidebar" aria-label="Playlists">
+                <div class="playlist-sidebar-heading">
+                  <h2>Playlists</h2>
+                  <button class="round-button" id="create-playlist" type="button" aria-label="Create playlist" title="Create playlist">+</button>
+                </div>
+                <button class="playlist-nav-item is-selected" id="all-media-view" type="button" aria-current="page">
+                  <span class="playlist-nav-icon" aria-hidden="true">♫</span>
+                  <span>All media</span>
+                </button>
+                <ul id="playlist-list" class="playlist-list" aria-label="Your playlists"></ul>
+              </aside>
 
-            <section id="media-player" class="media-player" aria-label="Media player" hidden>
-              <h2 id="current-media-title"></h2>
-              <audio id="audio-player" controls preload="metadata" hidden></audio>
-              <video id="video-player" controls playsinline preload="metadata" hidden></video>
-            </section>
-
-            <h2 class="library-heading">Your media</h2>
-            <ol id="media-list" class="media-list" aria-label="Imported media"></ol>
+              <section class="playlist-content" aria-labelledby="playlist-view-title">
+                <div class="playlist-view-heading">
+                  <div>
+                    <p class="playlist-eyebrow" id="playlist-eyebrow">LIBRARY</p>
+                    <h2 id="playlist-view-title">All media</h2>
+                    <p id="playlist-view-count" class="muted playlist-view-count"></p>
+                  </div>
+                  <div id="playlist-view-actions" class="playlist-view-actions"></div>
+                </div>
+                <ol id="media-list" class="media-list" aria-label="Imported media"></ol>
+              </section>
+            </div>
           </section>
 
           <section class="panel" id="stats-panel" data-panel="stats" aria-labelledby="stats-title" hidden>
@@ -115,6 +150,142 @@
         </main>
       </div>
     </div>
+
+    <div id="player-reveal-zone" class="player-reveal-zone" aria-hidden="true"></div>
+    <div id="player-dock" class="player-dock" hidden>
+      <button id="player-reveal" class="player-reveal" type="button" aria-label="Show player controls" aria-expanded="false" title="Show player controls">
+        <span aria-hidden="true"></span>
+      </button>
+      <section id="media-player" class="player-bar" aria-label="Now playing">
+      <div class="player-track">
+        <img id="player-artwork" class="player-artwork" src="/favicon.svg" alt="" />
+        <video id="video-player" class="player-video" playsinline preload="metadata" hidden tabindex="0" aria-label="Expand video" title="Expand video"></video>
+        <div class="player-track-copy">
+          <h2 id="current-media-title">Nothing playing</h2>
+          <p id="player-subtitle">Puffin Library</p>
+        </div>
+      </div>
+
+      <div class="player-center">
+        <button id="player-toggle" class="player-toggle" type="button" aria-label="Play" title="Play">▶</button>
+        <div class="player-timeline">
+          <span id="player-current-time">0:00</span>
+          <input id="player-seek" type="range" min="0" max="0" value="0" step="0.1" aria-label="Playback position" />
+          <span id="player-duration">0:00</span>
+        </div>
+      </div>
+
+      <div class="player-volume-area">
+        <span class="volume-icon" aria-hidden="true">◖))</span>
+        <input id="player-volume" type="range" min="0" max="1" value="1" step="0.05" aria-label="Volume" />
+        <select id="player-speed" class="player-speed" aria-label="Playback speed" title="Playback speed">
+          <option value="0.25">0.25×</option>
+          <option value="0.5">0.5×</option>
+          <option value="0.75">0.75×</option>
+          <option value="1" selected>1×</option>
+          <option value="1.25">1.25×</option>
+          <option value="1.5">1.5×</option>
+          <option value="1.75">1.75×</option>
+          <option value="2">2×</option>
+        </select>
+        <button id="player-close" class="player-close" type="button" aria-label="Close player" title="Close player">×</button>
+      </div>
+
+      <audio id="audio-player" preload="metadata" hidden></audio>
+      </section>
+    </div>
+
+    <dialog id="video-theater" class="video-theater" aria-label="Video player">
+      <div id="video-theater-stage" class="video-theater-stage"></div>
+    </dialog>
+
+    <dialog id="playlist-dialog" class="playlist-dialog">
+      <form id="playlist-dialog-form" method="dialog">
+        <h2 id="playlist-dialog-title">Create playlist</h2>
+        <p id="playlist-dialog-description" class="muted" hidden></p>
+        <label id="playlist-name-field" class="form-field">
+          <span>Playlist name</span>
+          <input id="playlist-name-input" name="playlist-name" type="text" maxlength="80" autocomplete="off" />
+        </label>
+        <label id="playlist-select-field" class="form-field" hidden>
+          <span>Add to playlist</span>
+          <select id="playlist-select" name="playlist-select"></select>
+        </label>
+        <div class="playlist-dialog-actions">
+          <button class="secondary-button" id="playlist-dialog-cancel" type="button">Cancel</button>
+          <button class="primary-button" id="playlist-dialog-submit" type="submit">Create</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="settings-dialog" class="settings-dialog" aria-labelledby="settings-title">
+      <div class="settings-layout">
+        <aside class="settings-sidebar" aria-label="Settings sections">
+          <p class="settings-sidebar-label">PUFFIN</p>
+          <nav class="settings-nav">
+            <button type="button" data-settings-section="account">Account</button>
+            <button type="button" data-settings-section="appearance">Appearance</button>
+            <button type="button" data-settings-section="playback">Playback</button>
+            <button type="button" data-settings-section="files" aria-current="page">Files &amp; Storage</button>
+            <button type="button" data-settings-section="downloads">Downloads</button>
+            <button type="button" data-settings-section="privacy">Privacy</button>
+            <button type="button" data-settings-section="about">About Puffin</button>
+          </nav>
+        </aside>
+        <div class="settings-main">
+          <header class="settings-header">
+            <button id="settings-back" class="settings-back" type="button" aria-label="Back to Puffin" title="Back">←</button>
+            <h1 id="settings-title">Settings</h1>
+            <button id="settings-close" class="settings-close" type="button" aria-label="Close settings" title="Close">×</button>
+          </header>
+          <div class="settings-content">
+            <section data-settings-panel="account" hidden>
+              <h2>Account</h2>
+              <p class="muted">Sign in and account sync are planned for a future version.</p>
+              <div class="settings-actions"><button class="secondary-button" type="button" disabled>Sign in</button><button class="secondary-button" type="button" disabled>Sign up</button></div>
+            </section>
+            <section data-settings-panel="appearance" hidden>
+              <h2>Appearance</h2>
+              <p class="muted">Theme choices and appearance preferences are coming soon.</p>
+            </section>
+            <section data-settings-panel="playback" hidden>
+              <h2>Playback</h2>
+              <p class="muted">Playback speed is available in the player. More playback preferences are coming soon.</p>
+            </section>
+            <section data-settings-panel="files">
+              <h2>Files &amp; Storage</h2>
+              <p id="library-storage" class="settings-storage-summary muted">Loading library storage…</p>
+              <div id="settings-capacity-meter" class="settings-capacity-meter">
+                <div class="settings-capacity-heading"><span>Media limit used</span><strong id="settings-capacity-label">Loading…</strong></div>
+                <progress id="settings-capacity-progress" max="100" value="0" aria-label="Media storage limit used"></progress>
+              </div>
+              <p id="settings-capacity-warning" class="settings-capacity-warning" role="status" aria-live="polite" hidden></p>
+              <form id="settings-storage-form" class="settings-storage-form">
+                <label class="form-field" for="settings-media-limit">
+                  <span>Puffin media storage limit (GB)</span>
+                  <input id="settings-media-limit" name="media-limit" type="number" min="0.1" max="1000" step="0.1" required />
+                </label>
+                <p class="muted settings-hint">Puffin will stop new imports and downloads when this limit is reached. Your browser may enforce a lower storage quota.</p>
+                <button class="primary-button" type="submit">Save limit</button>
+                <p id="settings-storage-status" class="muted" role="status" aria-live="polite"></p>
+              </form>
+            </section>
+            <section data-settings-panel="downloads" hidden>
+              <h2>Downloads</h2>
+              <p class="muted">Download format and Raspberry Pi preferences are coming soon.</p>
+            </section>
+            <section data-settings-panel="privacy" hidden>
+              <h2>Privacy</h2>
+              <p class="muted">Privacy and data controls are coming soon.</p>
+            </section>
+            <section data-settings-panel="about" hidden>
+              <h2>About Puffin</h2>
+              <p class="muted">Puffin keeps your media library on this device for offline playback.</p>
+            </section>
+          </div>
+        </div>
+      </div>
+    </dialog>
 
   </body>
 </html>

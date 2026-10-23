@@ -14,7 +14,7 @@ import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import quote, unquote, urlsplit
+from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 
 HOST = "127.0.0.1"
@@ -69,6 +69,38 @@ def _public_job(job: dict) -> dict:
     }
 
 
+def _search_youtube(query: str) -> list[dict]:
+    command = [
+        "yt-dlp",
+        "--dump-single-json",
+        "--flat-playlist",
+        "--skip-download",
+        "--quiet",
+        "--no-warnings",
+        f"ytsearch10:{query}",
+    ]
+    result = subprocess.run(command, capture_output=True, text=True, timeout=30, check=True)
+    payload = json.loads(result.stdout)
+    videos = []
+    for entry in payload.get("entries") or []:
+        video_id = entry.get("id")
+        if not video_id:
+            continue
+        thumbnails = entry.get("thumbnails") or []
+        thumbnail = entry.get("thumbnail") or (thumbnails[-1].get("url") if thumbnails else None)
+        videos.append({
+            "id": video_id,
+            "url": f"https://www.youtube.com/watch?v={quote(str(video_id), safe='')}",
+            "title": entry.get("title") or "Untitled video",
+            "channel": entry.get("uploader") or entry.get("channel") or "Unknown channel",
+            "duration": entry.get("duration"),
+            "thumbnail": thumbnail,
+        })
+        if len(videos) == 10:
+            break
+    return videos
+
+
 def _remove_work_directory(job: dict) -> None:
     work_dir = job.get("work_dir")
     if work_dir:
@@ -105,17 +137,26 @@ def _run_download(job_id: str) -> None:
     ]
 
     if job["kind"] == "audio":
-        command.extend(["--format", "bestaudio/best", "--extract-audio", "--audio-format", "m4a", "--audio-quality", "5"])
+        command.extend([
+            "--format",
+            "bestaudio/best",
+            "--extract-audio",
+            "--audio-format",
+            "m4a",
+            "--audio-quality",
+            "192K",
+        ])
     else:
         command.extend([
             "--format",
-            "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b",
+            "bv[vcodec~='^(avc|h264)']+ba[acodec~='^(mp4a|aac)']/b[vcodec~='^(avc|h264)'][acodec~='^(mp4a|aac)']",
             "--merge-output-format",
             "mp4",
         ])
     command.append(job["url"])
 
     process = None
+    compatible_format_missing = False
     try:
         process = subprocess.Popen(
             command,
@@ -135,6 +176,8 @@ def _run_download(job_id: str) -> None:
                 process.terminate()
 
         for line in process.stdout or []:
+            if "Requested format is not available" in line:
+                compatible_format_missing = True
             with JOBS_LOCK:
                 current_job = JOBS.get(job_id)
                 if not current_job:
@@ -166,6 +209,9 @@ def _run_download(job_id: str) -> None:
                 return
 
         if return_code != 0:
+            if compatible_format_missing:
+                _fail_job(job_id, "This video does not offer an H.264 video stream with AAC audio.")
+                return
             raise RuntimeError(f"yt-dlp exited with code {return_code}")
 
         output_files = [
@@ -304,10 +350,28 @@ class PuffinHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         if self._reject_origin():
             return
-        path_parts = [unquote(part) for part in urlsplit(self.path).path.strip("/").split("/")]
+        parsed_path = urlsplit(self.path)
+        path_parts = [unquote(part) for part in parsed_path.path.strip("/").split("/")]
 
         if path_parts == ["api", "health"]:
             self._json(200, {"ok": True, "service": "puffin-downloader"})
+            return
+
+        if path_parts == ["api", "search"]:
+            query = parse_qs(parsed_path.query).get("q", [""])[0].strip()
+            if not query or len(query) > 200:
+                self._json(400, {"error": "Enter a YouTube search between 1 and 200 characters."})
+                return
+            try:
+                videos = _search_youtube(query)
+            except subprocess.TimeoutExpired:
+                self._json(504, {"error": "YouTube search timed out. Try again in a moment."})
+                return
+            except Exception as error:
+                LOGGER.warning("YouTube search failed: %s", type(error).__name__)
+                self._json(502, {"error": "YouTube search failed. Check the Pi connection and try again."})
+                return
+            self._json(200, {"videos": videos})
             return
 
         if len(path_parts) == 3 and path_parts[:2] == ["api", "downloads"]:

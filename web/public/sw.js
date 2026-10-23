@@ -1,8 +1,9 @@
-const CACHE_NAME = "puffin-shell-v1";
+const CACHE_NAME = "puffin-shell-v6";
 const APP_SHELL = [
   "/",
   "/index.html",
   "/manifest.webmanifest",
+  "/favicon.svg",
   "/icons/puffin-180.png",
   "/icons/puffin-192.png",
   "/icons/puffin-512.png",

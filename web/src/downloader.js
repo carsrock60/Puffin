@@ -1,4 +1,5 @@
-import { saveMediaFile } from "./library.js";
+import { assertMediaStorageCapacity, getMediaStorageCapacity, saveMediaFile } from "./library.js";
+import { guardReadyPiDownload, MediaCapacityError } from "./media-capacity.js";
 
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
@@ -57,15 +58,158 @@ async function confirmPiSavedFile(baseUrl, jobId) {
   return false;
 }
 
+async function cancelPiDownload(baseUrl, jobId) {
+  const response = await fetch(`${baseUrl}/api/downloads/${jobId}`, { method: "DELETE" });
+  if (!response.ok && response.status !== 404) {
+    throw new Error(`Pi cleanup failed (${response.status}).`);
+  }
+}
+
 export function initializeDownloader() {
   const form = document.querySelector("#download-form");
   const piAddress = document.querySelector("#pi-address");
   const youtubeUrl = document.querySelector("#youtube-url");
+  const youtubeLinkField = document.querySelector("#youtube-link-field");
+  const downloadSourceLink = document.querySelector("#download-source-link");
+  const downloadSourceBrowse = document.querySelector("#download-source-browse");
+  const youtubeBrowsePanel = document.querySelector("#youtube-browse-panel");
+  const youtubeSearchQuery = document.querySelector("#youtube-search-query");
+  const youtubeSearchButton = document.querySelector("#youtube-search-button");
+  const youtubeSearchStatus = document.querySelector("#youtube-search-status");
+  const youtubeSearchResults = document.querySelector("#youtube-search-results");
+  const youtubeSelectedVideo = document.querySelector("#youtube-selected-video");
+  const youtubeSelectedTitle = document.querySelector("#youtube-selected-title");
+  const youtubeClearSelection = document.querySelector("#youtube-clear-selection");
   const downloadKind = document.querySelector("#download-kind");
   const checkButton = document.querySelector("#check-pi");
   const submitButton = document.querySelector("#start-download");
   const progress = document.querySelector("#download-progress");
   const status = document.querySelector("#download-status");
+  let downloadSource = "link";
+
+  function setDownloadSource(source) {
+    downloadSource = source;
+    const browsing = source === "browse";
+    youtubeLinkField.hidden = browsing;
+    youtubeBrowsePanel.hidden = !browsing;
+    youtubeUrl.required = !browsing;
+    downloadSourceLink.classList.toggle("is-selected", !browsing);
+    downloadSourceBrowse.classList.toggle("is-selected", browsing);
+    downloadSourceLink.setAttribute("aria-pressed", String(!browsing));
+    downloadSourceBrowse.setAttribute("aria-pressed", String(browsing));
+  }
+
+  function formatDuration(seconds) {
+    if (!Number.isFinite(Number(seconds)) || Number(seconds) < 0) return "Duration unavailable";
+    const total = Math.floor(Number(seconds));
+    const hours = Math.floor(total / 3600);
+    const minutes = Math.floor((total % 3600) / 60);
+    const remainder = total % 60;
+    return hours
+      ? `${hours}:${String(minutes).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`
+      : `${minutes}:${String(remainder).padStart(2, "0")}`;
+  }
+
+  function renderYouTubeResults(videos) {
+    youtubeSearchResults.replaceChildren();
+    if (!videos.length) {
+      youtubeSearchStatus.textContent = "No videos found. Try a different search.";
+      return;
+    }
+
+    youtubeSearchStatus.textContent = `${videos.length} ${videos.length === 1 ? "video" : "videos"} found.`;
+    videos.forEach((video) => {
+      const item = document.createElement("li");
+      item.className = "youtube-result";
+
+      const thumbnail = document.createElement("img");
+      thumbnail.className = "youtube-result-thumbnail";
+      thumbnail.alt = "";
+      thumbnail.loading = "lazy";
+      thumbnail.referrerPolicy = "no-referrer";
+      if (video.thumbnail) {
+        try {
+          const thumbnailUrl = new URL(video.thumbnail);
+          if (thumbnailUrl.protocol === "https:") thumbnail.src = thumbnailUrl.href;
+          else thumbnail.hidden = true;
+        } catch {
+          thumbnail.hidden = true;
+        }
+      } else thumbnail.hidden = true;
+      thumbnail.addEventListener("error", () => { thumbnail.hidden = true; });
+
+      const details = document.createElement("div");
+      details.className = "youtube-result-details";
+      const title = document.createElement("strong");
+      title.textContent = video.title || "Untitled video";
+      const metadata = document.createElement("span");
+      metadata.textContent = `${video.channel || "Unknown channel"} · ${formatDuration(video.duration)}`;
+      details.append(title, metadata);
+
+      const actions = document.createElement("div");
+      actions.className = "youtube-result-actions";
+      const preview = document.createElement("button");
+      preview.className = "secondary-button youtube-result-preview";
+      preview.type = "button";
+      preview.textContent = "Preview";
+      preview.addEventListener("click", () => window.open(video.url, "_blank", "noopener,noreferrer"));
+
+      const choose = document.createElement("button");
+      choose.className = "secondary-button youtube-result-choose";
+      choose.type = "button";
+      choose.textContent = "Download this";
+      choose.addEventListener("click", () => {
+        youtubeUrl.value = video.url;
+        youtubeSelectedTitle.textContent = video.title || "Selected video";
+        youtubeSelectedVideo.hidden = false;
+        youtubeSearchStatus.textContent = "Video selected. Choose a format and start the download.";
+      });
+
+      actions.append(preview, choose);
+      item.append(thumbnail, details, actions);
+      youtubeSearchResults.append(item);
+    });
+  }
+
+  async function searchYouTube() {
+    const query = youtubeSearchQuery.value.trim();
+    if (!query) {
+      youtubeSearchStatus.textContent = "Enter a search term first.";
+      youtubeSearchQuery.focus();
+      return;
+    }
+
+    youtubeSearchButton.disabled = true;
+    youtubeSearchStatus.textContent = "Searching YouTube…";
+    youtubeSearchResults.replaceChildren();
+    try {
+      const baseUrl = getPiBaseUrl(piAddress.value);
+      const result = await requestJson(baseUrl, `/api/search?q=${encodeURIComponent(query)}`);
+      renderYouTubeResults(Array.isArray(result.videos) ? result.videos : []);
+    } catch (error) {
+      youtubeSearchStatus.textContent = error.message || "YouTube search failed.";
+    } finally {
+      youtubeSearchButton.disabled = false;
+    }
+  }
+
+  downloadSourceLink.addEventListener("click", () => setDownloadSource("link"));
+  downloadSourceBrowse.addEventListener("click", () => setDownloadSource("browse"));
+  youtubeSearchButton.addEventListener("click", searchYouTube);
+  youtubeSearchQuery.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      searchYouTube();
+    }
+  });
+  youtubeClearSelection.addEventListener("click", () => {
+    youtubeUrl.value = "";
+    youtubeSelectedVideo.hidden = true;
+    youtubeSearchStatus.textContent = "Choose a video from the results before downloading.";
+  });
+  youtubeUrl.addEventListener("input", () => {
+    if (downloadSource === "link") youtubeSelectedVideo.hidden = true;
+  });
 
   try {
     piAddress.value = localStorage.getItem("puffin-pi-address") || "";
@@ -97,6 +241,13 @@ export function initializeDownloader() {
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
+    const hasSelectedBrowseResult = downloadSource !== "browse" || !youtubeSelectedVideo.hidden;
+    if (!youtubeUrl.value.trim() || !hasSelectedBrowseResult) {
+      setStatus(status, downloadSource === "browse"
+        ? "Search YouTube and choose a video before downloading."
+        : "Enter a YouTube link before downloading.");
+      return;
+    }
     submitButton.disabled = true;
     checkButton.disabled = true;
     progress.hidden = false;
@@ -109,6 +260,10 @@ export function initializeDownloader() {
 
     try {
       baseUrl = getPiBaseUrl(piAddress.value);
+      const capacity = await getMediaStorageCapacity();
+      if (capacity.remainingBytes <= 0) {
+        throw new Error("Puffin media storage limit reached. Delete files or raise the limit before downloading.");
+      }
       try {
         localStorage.setItem("puffin-pi-address", baseUrl);
       } catch {
@@ -138,6 +293,17 @@ export function initializeDownloader() {
 
       if (currentJob.status !== "ready") {
         throw new Error(currentJob.error || "The Pi download did not finish.");
+      }
+
+      try {
+        await guardReadyPiDownload({
+          fileSize: currentJob.size,
+          assertCapacity: assertMediaStorageCapacity,
+          cancelDownload: () => cancelPiDownload(baseUrl, jobId),
+        });
+      } catch (error) {
+        jobId = null;
+        throw error;
       }
 
       progress.value = 100;
@@ -182,9 +348,14 @@ export function initializeDownloader() {
     } catch (error) {
       setStatus(status, error.message || "The download failed.");
       if (jobId && baseUrl && !savedLocally) {
-        // Keep a completed file on the Pi if transfer or local storage failed.
-        // The Pi expires unconfirmed files automatically after its retention period.
-        if (transferStarted) {
+        if (transferStarted && error instanceof MediaCapacityError) {
+          try {
+            await cancelPiDownload(baseUrl, jobId);
+          } catch {
+            setStatus(status, `${error.message} The Pi could not confirm cleanup; its temporary copy will expire automatically.`);
+          }
+        } else if (transferStarted) {
+          // Keep completed files on the Pi for retry if transfer or browser storage fails.
           setStatus(status, `${error.message || "The transfer failed."} The Pi will keep its temporary copy for up to one hour.`);
         } else {
           fetch(`${baseUrl}/api/downloads/${jobId}`, { method: "DELETE" }).catch(() => {});

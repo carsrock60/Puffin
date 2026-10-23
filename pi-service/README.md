@@ -2,7 +2,7 @@
 
 The Pi service runs `yt-dlp` as a private, job-based API. Puffin requests an audio or video download, polls for progress, receives the result, saves it in the device's IndexedDB library, and then confirms the save so the Pi can delete its temporary file.
 
-The service accepts HTTPS YouTube URLs and supports audio (M4A) or video (MP4). It permits one active download or file transfer at a time. A new request replaces an older completed file that Puffin did not confirm. The default temporary file limit is 2 GiB, and the default free-space reserve is 1 GiB. An unconfirmed file is removed after one hour. Job state is held in memory, so a Pi restart cancels active jobs and clears abandoned Puffin job folders.
+The service accepts HTTPS YouTube URLs and supports AAC audio in M4A with a 192 kb/s target, or H.264 video with AAC audio in MP4. Puffin can search YouTube through the Pi's `GET /api/search?q=...` endpoint; this uses yt-dlp's flat search to return up to 10 video titles, channels, durations, URLs, and thumbnails without downloading media. Video downloads require the source to offer H.264 and AAC streams; the service reports an error when those formats are unavailable rather than returning a less-compatible codec. The audio quality setting is applied when yt-dlp converts the source to M4A. It permits one active download or file transfer at a time. A new request replaces an older completed file that Puffin did not confirm. The default temporary file limit is 2 GiB, and the default free-space reserve is 1 GiB. An unconfirmed file is removed after one hour. Job state is held in memory, so a Pi restart cancels active jobs and clears abandoned Puffin job folders.
 
 ## Install on Raspberry Pi OS
 
