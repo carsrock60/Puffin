@@ -243,10 +243,11 @@ main {
 .library-heading { margin: 28px 0 12px; font-size: 1.1rem; }
 
 .download-form { display: grid; gap: 18px; max-width: 620px; margin-top: 24px; }
+.download-link-row { display: grid; grid-template-columns: minmax(0, 1fr) 170px; align-items: end; gap: 12px; }
 .download-source-switch { display: inline-flex; width: max-content; max-width: 100%; padding: 4px; background: var(--page); border: 1px solid var(--border); border-radius: 999px; }
 .download-source-switch button { min-height: 38px; padding: 0 16px; color: var(--muted); background: transparent; border: 0; border-radius: 999px; cursor: pointer; font: inherit; font-size: 0.88rem; font-weight: 600; }
 .download-source-switch button.is-selected { color: #fff; background: var(--accent); }
-.download-source-switch button:focus-visible, .youtube-result-choose:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.download-source-switch button:focus-visible, .youtube-result-download:focus-visible, .youtube-result-formats button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 #youtube-link-field[hidden], .youtube-browse-panel[hidden], .youtube-selected-video[hidden] { display: none; }
 .youtube-browse-panel { display: grid; gap: 12px; }
 .youtube-search-row { display: flex; align-items: flex-end; gap: 10px; }
@@ -263,8 +264,11 @@ main {
 .youtube-result-details { display: grid; min-width: 0; gap: 5px; }
 .youtube-result-details strong { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow-wrap: anywhere; font-size: 0.92rem; }
 .youtube-result-details span { overflow: hidden; color: var(--muted); font-size: 0.8rem; text-overflow: ellipsis; white-space: nowrap; }
-.youtube-result-actions { display: flex; flex: 0 0 auto; flex-direction: column; gap: 6px; }
-.youtube-result-actions .secondary-button { min-height: 36px; padding: 0 12px; }
+.youtube-result-actions { display: grid; min-width: 96px; justify-items: stretch; gap: 6px; }
+.youtube-result-download { min-height: 38px; padding: 0 14px; }
+.youtube-result-formats { display: flex; gap: 5px; }
+.youtube-result-formats[hidden] { display: none; }
+.youtube-result-formats button { min-height: 34px; padding: 0 9px; font-size: .78rem; }
 .pi-connection-row { display: flex; align-items: flex-end; gap: 10px; }
 .form-field { display: grid; flex: 1; gap: 7px; min-width: 0; color: var(--muted); font-size: 0.9rem; font-weight: 600; }
 .form-field input, .form-field select {
@@ -291,6 +295,7 @@ main {
   white-space: nowrap;
 }
 .download-form > .primary-button { justify-self: start; }
+.download-form > #cancel-download { justify-self: start; }
 .download-form progress { width: 100%; height: 10px; accent-color: var(--accent); }
 .download-form [role="status"] { margin: 0; }
 .download-transfer-details { margin: -10px 0 0; color: var(--muted); font-size: .85rem; font-variant-numeric: tabular-nums; }
@@ -659,6 +664,7 @@ body.dark .media-action.danger:hover { background: #48282b; }
   .playlist-view-heading { align-items: flex-start; }
   .playlist-dialog form { padding: 22px; }
   .pi-connection-row { align-items: stretch; flex-direction: column; }
+  .download-link-row { grid-template-columns: minmax(0, 1fr) 120px; gap: 8px; }
   .download-form > .primary-button { width: 100%; }
   .youtube-search-row { align-items: stretch; flex-direction: column; }
   .youtube-search-row .secondary-button { width: 100%; }

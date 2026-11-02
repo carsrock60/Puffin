@@ -92,15 +92,24 @@
                 <button id="download-source-link" class="is-selected" type="button" aria-pressed="true">Paste a media link</button>
                 <button id="download-source-browse" type="button" aria-pressed="false">Browse YouTube</button>
               </div>
-              <label id="youtube-link-field" class="form-field">
-                <span id="download-link-label">Direct media URL</span>
-                <input id="youtube-url" name="youtube-url" type="url" inputmode="url" placeholder="https://example.com/audio.m4a" autocomplete="url" required />
-              </label>
+              <div id="download-link-row" class="download-link-row">
+                <label id="youtube-link-field" class="form-field">
+                  <span id="download-link-label">Direct media URL or YouTube search</span>
+                  <input id="youtube-url" name="youtube-url" type="text" placeholder="Paste a link or search, e.g. Apollo 11 highlights" autocomplete="off" required />
+                </label>
+                <label class="form-field format-field" for="download-kind">
+                  <span>Format</span>
+                  <select id="download-kind" name="download-kind">
+                    <option value="audio">Audio · M4A</option>
+                    <option value="video">Video · MP4</option>
+                  </select>
+                </label>
+              </div>
               <section id="youtube-browse-panel" class="youtube-browse-panel" aria-label="Search YouTube" hidden>
                 <div class="youtube-search-row">
                   <label class="form-field" for="youtube-search-query">
                     <span>Search YouTube</span>
-                    <input id="youtube-search-query" type="search" maxlength="200" placeholder="Search videos" autocomplete="off" />
+                    <input id="youtube-search-query" type="search" maxlength="200" placeholder="Search for a video or song" autocomplete="off" />
                   </label>
                   <button id="youtube-search-button" class="secondary-button" type="button">Search</button>
                 </div>
@@ -111,14 +120,8 @@
                 </div>
                 <ol id="youtube-search-results" class="youtube-search-results" aria-label="YouTube search results"></ol>
               </section>
-              <label id="download-format-field" class="form-field format-field" hidden>
-                <span>Format</span>
-                <select id="download-kind" name="download-kind">
-                  <option value="audio">Audio · AAC M4A · 192 kb/s target</option>
-                  <option value="video">Video · H.264/AAC MP4</option>
-                </select>
-              </label>
               <button class="primary-button" id="start-download" type="submit">Download to Puffin</button>
+              <button class="secondary-button" id="cancel-download" type="button" hidden>Cancel download</button>
               <progress id="download-progress" max="100" value="0" hidden></progress>
               <p id="download-transfer-details" class="download-transfer-details" hidden></p>
               <p id="download-status" class="muted" role="status" aria-live="polite">Choose a direct media link or configure the Raspberry Pi in Settings to download from YouTube.</p>

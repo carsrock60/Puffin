@@ -60,10 +60,13 @@ async function confirmPiSavedFile(baseUrl, jobId) {
 }
 
 async function cancelPiDownload(baseUrl, jobId) {
-  const response = await fetch(`${baseUrl}/api/downloads/${jobId}`, { method: "DELETE" });
-  if (!response.ok && response.status !== 404) {
-    throw new Error(`Pi cleanup failed (${response.status}).`);
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const response = await fetch(`${baseUrl}/api/downloads/${jobId}`, { method: "DELETE" });
+    if (response.ok || response.status === 404) return;
+    if (response.status !== 409) throw new Error(`Pi cleanup failed (${response.status}).`);
+    await sleep(250);
   }
+  throw new Error("The Pi is still finishing the transfer. Its temporary file will expire automatically.");
 }
 
 function formatTime(seconds) {
@@ -160,12 +163,29 @@ export function initializeDownloader() {
   const youtubeClearSelection = document.querySelector("#youtube-clear-selection");
   const downloadKind = document.querySelector("#download-kind");
   const submitButton = document.querySelector("#start-download");
+  const cancelButton = document.querySelector("#cancel-download");
   const progress = document.querySelector("#download-progress");
   const progressDetails = document.querySelector("#download-transfer-details");
   const downloadLinkLabel = document.querySelector("#download-link-label");
-  const formatField = document.querySelector("#download-format-field");
   const status = document.querySelector("#download-status");
   let downloadSource = "link";
+  let selectedBrowseVideo = false;
+  let activeDownload = null;
+
+  cancelButton.addEventListener("click", async () => {
+    if (!activeDownload) return;
+    activeDownload.cancelled = true;
+    cancelButton.disabled = true;
+    setStatus(status, "Cancelling download and cleaning up…");
+    activeDownload.controller?.abort();
+    if (activeDownload.baseUrl && activeDownload.jobId) {
+      try {
+        await cancelPiDownload(activeDownload.baseUrl, activeDownload.jobId);
+      } catch (error) {
+        setStatus(status, error.message || "Puffin could not confirm Pi cleanup.");
+      }
+    }
+  });
 
   function setDownloadSource(source) {
     downloadSource = source;
@@ -173,11 +193,11 @@ export function initializeDownloader() {
     const usingPi = getDownloadPreferences().backend === "pi";
     youtubeLinkField.hidden = browsing;
     youtubeBrowsePanel.hidden = !browsing || !usingPi;
-    formatField.hidden = !usingPi;
     downloadSourceBrowse.hidden = !usingPi;
-    downloadLinkLabel.textContent = usingPi ? "YouTube link" : "Direct media URL";
-    youtubeUrl.placeholder = usingPi ? "https://www.youtube.com/watch?v=…" : "https://example.com/audio.m4a";
+    downloadLinkLabel.textContent = usingPi ? "YouTube link or search" : "Direct media URL";
+    youtubeUrl.placeholder = usingPi ? "Paste a YouTube link or search, e.g. Apollo 11 highlights" : "https://example.com/audio.m4a";
     youtubeUrl.required = !browsing;
+    if (!browsing) selectedBrowseVideo = false;
     downloadSourceLink.classList.toggle("is-selected", !browsing);
     downloadSourceBrowse.classList.toggle("is-selected", browsing);
     downloadSourceLink.setAttribute("aria-pressed", String(!browsing));
@@ -233,24 +253,30 @@ export function initializeDownloader() {
 
       const actions = document.createElement("div");
       actions.className = "youtube-result-actions";
-      const preview = document.createElement("button");
-      preview.className = "secondary-button youtube-result-preview";
-      preview.type = "button";
-      preview.textContent = "Preview";
-      preview.addEventListener("click", () => window.open(video.url, "_blank", "noopener,noreferrer"));
-
-      const choose = document.createElement("button");
-      choose.className = "secondary-button youtube-result-choose";
-      choose.type = "button";
-      choose.textContent = "Choose";
-      choose.addEventListener("click", () => {
-        youtubeUrl.value = video.url;
-        youtubeSelectedTitle.textContent = video.title || "Selected video";
-        youtubeSelectedVideo.hidden = false;
-        youtubeSearchStatus.textContent = "Video selected. Choose a format and start the download.";
-      });
-
-      actions.append(preview, choose);
+      const download = document.createElement("button");
+      download.className = "primary-button youtube-result-download";
+      download.type = "button";
+      download.textContent = "Download";
+      const formats = document.createElement("div");
+      formats.className = "youtube-result-formats";
+      formats.hidden = true;
+      for (const [kind, label] of [["audio", "Audio"], ["video", "Video"]]) {
+        const chooseFormat = document.createElement("button");
+        chooseFormat.className = "secondary-button";
+        chooseFormat.type = "button";
+        chooseFormat.textContent = label;
+        chooseFormat.addEventListener("click", () => {
+          youtubeUrl.value = video.url;
+          downloadKind.value = kind;
+          selectedBrowseVideo = true;
+          youtubeSelectedTitle.textContent = video.title || "Selected video";
+          youtubeSelectedVideo.hidden = false;
+          form.requestSubmit();
+        });
+        formats.append(chooseFormat);
+      }
+      download.addEventListener("click", () => { formats.hidden = !formats.hidden; });
+      actions.append(download, formats);
       item.append(thumbnail, details, actions);
       youtubeSearchResults.append(item);
     });
@@ -293,11 +319,15 @@ export function initializeDownloader() {
   });
   youtubeClearSelection.addEventListener("click", () => {
     youtubeUrl.value = "";
-    youtubeSelectedVideo.hidden = true;
-    youtubeSearchStatus.textContent = "Choose a video from the results before downloading.";
+      youtubeSelectedVideo.hidden = true;
+      selectedBrowseVideo = false;
+      youtubeSearchStatus.textContent = "Search YouTube and choose audio or video from a result.";
   });
   youtubeUrl.addEventListener("input", () => {
-    if (downloadSource === "link") youtubeSelectedVideo.hidden = true;
+    if (downloadSource === "link") {
+      youtubeSelectedVideo.hidden = true;
+      selectedBrowseVideo = false;
+    }
   });
 
   window.addEventListener("puffin:download-pick", (event) => {
@@ -330,11 +360,12 @@ export function initializeDownloader() {
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
-    const hasSelectedBrowseResult = downloadSource !== "browse" || !youtubeSelectedVideo.hidden;
-    if (!youtubeUrl.value.trim() || !hasSelectedBrowseResult) {
+    const entered = youtubeUrl.value.trim();
+    const hasSelectedBrowseResult = downloadSource !== "browse" || selectedBrowseVideo;
+    if (!entered || !hasSelectedBrowseResult) {
       setStatus(status, downloadSource === "browse"
-        ? "Search YouTube and choose a video before downloading."
-        : "Enter a direct media-file URL before downloading.");
+        ? "Search YouTube and choose Audio or Video on a result."
+        : "Enter a direct media link or a YouTube search phrase.");
       return;
     }
     const preferences = getDownloadPreferences();
@@ -343,6 +374,9 @@ export function initializeDownloader() {
       return;
     }
     submitButton.disabled = true;
+    cancelButton.hidden = false;
+    cancelButton.disabled = false;
+    activeDownload = { cancelled: false, controller: new AbortController() };
     progress.hidden = false;
     progress.value = 0;
     progressDetails.hidden = false;
@@ -350,12 +384,18 @@ export function initializeDownloader() {
 
     if (preferences.backend === "device") {
       try {
+        if (!/^https?:\/\//i.test(entered)) {
+          throw new Error("Text searches and YouTube downloads require Raspberry Pi mode. Select it in Settings → Downloads.");
+        }
         const sourceUrl = new URL(youtubeUrl.value.trim());
+        if (["youtube.com", "www.youtube.com", "youtu.be"].includes(sourceUrl.hostname.toLowerCase())) {
+          throw new Error("YouTube downloads require Raspberry Pi mode. Select it in Settings → Downloads.");
+        }
         if (sourceUrl.protocol !== "https:" && sourceUrl.protocol !== "http:") throw new Error("Use an HTTP or HTTPS direct media URL.");
         const capacity = await getMediaStorageCapacity();
         if (capacity.remainingBytes <= 0) throw new Error("Puffin media storage limit reached. Delete files or raise the limit before downloading.");
         setStatus(status, "Connecting to the media source…");
-        const response = await fetch(sourceUrl.href);
+        const response = await fetch(sourceUrl.href, { signal: activeDownload.controller.signal });
         if (!response.ok) throw new Error(`The media source returned ${response.status}.`);
         const media = await readDirectMedia(response, sourceUrl.href, capacity, ({ received, total, speed, eta }) => {
           progress.value = total ? Math.min(100, (received / total) * 100) : 0;
@@ -366,6 +406,8 @@ export function initializeDownloader() {
           progressDetails.textContent = `${amount} · ${formatBytes(speed)}/s · ${estimate}`;
           setStatus(status, "Downloading on this device…");
         });
+        if (activeDownload.cancelled) throw new DOMException("Download cancelled.", "AbortError");
+        cancelButton.disabled = true;
         setStatus(status, "Saving to your Puffin library…");
         progressDetails.textContent = `${formatBytes(media.blob.size)} · Saving locally…`;
         await saveMediaFile(media.blob, { name: media.name, type: media.mimeType || media.blob.type });
@@ -376,11 +418,15 @@ export function initializeDownloader() {
         progressDetails.textContent = `${formatBytes(media.blob.size)} · Complete`;
         setStatus(status, "Saved to your Puffin library on this device.");
       } catch (error) {
-        setStatus(status, error.message === "Failed to fetch"
+        setStatus(status, activeDownload.cancelled || error.name === "AbortError" ? "Download cancelled. Partial data was discarded."
+          : error.message === "Failed to fetch"
           ? "The source blocked browser access or could not be reached. Try a direct file URL that permits CORS, or configure the Pi in Settings."
           : error.message || "The download failed.");
       } finally {
         submitButton.disabled = false;
+        cancelButton.hidden = true;
+        cancelButton.disabled = false;
+        activeDownload = null;
         if (progress.value < 100) progress.hidden = true;
       }
       return;
@@ -400,12 +446,19 @@ export function initializeDownloader() {
       setStatus(status, "Connecting to the Pi…");
       await checkPi(baseUrl);
 
+      const downloadTarget = /^https?:\/\//i.test(entered) ? entered : `ytsearch1:${entered}`;
       const job = await requestJson(baseUrl, "/api/downloads", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: youtubeUrl.value.trim(), kind: downloadKind.value }),
+        body: JSON.stringify({ url: downloadTarget, kind: downloadKind.value }),
       });
       jobId = job.id;
+      activeDownload.baseUrl = baseUrl;
+      activeDownload.jobId = jobId;
+      if (activeDownload.cancelled) {
+        await cancelPiDownload(baseUrl, jobId);
+        throw new DOMException("Download cancelled.", "AbortError");
+      }
 
       let currentJob = job;
       while (["queued", "downloading", "converting"].includes(currentJob.status)) {
@@ -448,7 +501,7 @@ export function initializeDownloader() {
       progressDetails.textContent = "Download complete · Saving to your Puffin library";
       setStatus(status, "Receiving file from the Pi…");
       transferStarted = true;
-      const fileResponse = await fetch(`${baseUrl}/api/downloads/${jobId}/file`);
+      const fileResponse = await fetch(`${baseUrl}/api/downloads/${jobId}/file`, { signal: activeDownload.controller.signal });
       if (!fileResponse.ok) {
         const payload = await responsePayload(fileResponse);
         throw new Error(payload.error || `File transfer failed (${fileResponse.status}).`);
@@ -462,6 +515,8 @@ export function initializeDownloader() {
         progressDetails.textContent = `${amount} · ${formatBytes(speed)}/s · ${eta === null ? "time remaining unavailable" : `${formatTime(eta)} remaining`}`;
         setStatus(status, "Receiving file from the Pi…");
       });
+      if (activeDownload.cancelled) throw new DOMException("Download cancelled.", "AbortError");
+      cancelButton.disabled = true;
       const mediaBlob = piMedia.blob;
       setStatus(status, "Saving to this device…");
       const encodedName = fileResponse.headers.get("X-Download-Name");
@@ -494,11 +549,12 @@ export function initializeDownloader() {
         setStatus(status, "Saved locally. The Pi could not confirm cleanup; its temporary copy will expire automatically.");
       }
     } catch (error) {
-      setStatus(status, error.message || "The download failed.");
-      if (jobId && !savedLocally && !(error instanceof MediaCapacityError)) {
+      setStatus(status, activeDownload.cancelled || error.name === "AbortError" ? "Download cancelled. Partial transfer was discarded."
+        : error.message || "The download failed.");
+      if (jobId && !savedLocally && !activeDownload.cancelled && !(error instanceof MediaCapacityError)) {
         recordPuffinActivity("failedJobs", 1, error.message || "The download failed.").catch((statsError) => console.warn("Could not record download failure:", statsError));
       }
-      if (jobId && baseUrl && !savedLocally) {
+      if (jobId && baseUrl && !savedLocally && !activeDownload.cancelled) {
         if (transferStarted && error instanceof MediaCapacityError) {
           try {
             await cancelPiDownload(baseUrl, jobId);
@@ -514,6 +570,9 @@ export function initializeDownloader() {
       }
     } finally {
       submitButton.disabled = false;
+      cancelButton.hidden = true;
+      cancelButton.disabled = false;
+      activeDownload = null;
       progress.hidden = true;
       progressDetails.hidden = true;
     }

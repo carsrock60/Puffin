@@ -42,6 +42,9 @@ LOGGER = logging.getLogger("puffin-downloader")
 def _is_allowed_media_url(value: object) -> bool:
     if not isinstance(value, str) or len(value) > 4096:
         return False
+    if value.startswith("ytsearch1:"):
+        query = value.removeprefix("ytsearch1:").strip()
+        return bool(query) and len(query) <= 200 and not any(ord(character) < 32 for character in query)
     try:
         parsed = urlsplit(value)
         hostname = (parsed.hostname or "").lower().rstrip(".")
@@ -464,7 +467,7 @@ class PuffinHandler(BaseHTTPRequestHandler):
         url = request.get("url")
         kind = request.get("kind")
         if not _is_allowed_media_url(url):
-            self._json(400, {"error": "Enter an HTTPS YouTube video URL."})
+            self._json(400, {"error": "Enter an HTTPS YouTube video URL or a valid YouTube search query."})
             return
         if not isinstance(kind, str) or kind not in {"audio", "video"}:
             self._json(400, {"error": "Choose audio (M4A) or video (MP4)."})
