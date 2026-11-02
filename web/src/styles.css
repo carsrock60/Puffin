@@ -546,6 +546,16 @@ body.has-player main { padding-bottom: 132px; }
 .settings-content { flex: 1; padding: 30px clamp(20px, 4vw, 48px); overflow-y: auto; }
 .settings-content h2 { margin: 0 0 12px; font-size: 1.55rem; letter-spacing: -0.035em; }
 .settings-content > section > .muted { line-height: 1.6; }
+.about-puffin-card { display: flex; align-items: center; gap: 16px; margin: 24px 0 18px; padding: 18px; background: var(--surface); border: 1px solid var(--border); border-radius: 18px; }
+.about-puffin-card img { flex: 0 0 auto; border-radius: 14px; }
+.about-puffin-card h3 { margin: 0 0 4px; font-size: 1.2rem; }
+.about-puffin-card p { margin: 0; color: var(--muted); line-height: 1.5; }
+.about-puffin-description { max-width: 680px; }
+.about-puffin-features { display: grid; max-width: 720px; gap: 10px; margin: 22px 0; padding: 0; list-style: none; }
+.about-puffin-features li { display: grid; gap: 4px; padding: 14px 16px; background: var(--surface); border: 1px solid var(--border); border-radius: 15px; }
+.about-puffin-features strong { font-size: .92rem; }
+.about-puffin-features span, .about-puffin-footer { color: var(--muted); font-size: .86rem; line-height: 1.55; }
+.about-puffin-footer { max-width: 680px; }
 .settings-storage-summary { margin: 0 0 26px; padding: 16px 18px; background: var(--page); border: 1px solid var(--border); border-radius: 16px; line-height: 1.6; }
 .settings-capacity-meter { display: grid; gap: 10px; margin: 0 0 12px; padding: 16px 18px; background: var(--surface); border: 1px solid var(--border); border-radius: 16px; }
 .settings-capacity-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; color: var(--muted); font-size: 0.88rem; }
