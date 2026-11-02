@@ -1,12 +1,12 @@
-const CACHE_NAME = "puffin-shell-v6";
+const CACHE_NAME = "puffin-shell-v12";
 const APP_SHELL = [
   "/",
   "/index.html",
   "/manifest.webmanifest",
   "/favicon.svg",
-  "/icons/puffin-180.png",
-  "/icons/puffin-192.png",
-  "/icons/puffin-512.png",
+  "/icons/puffin-app-180.png",
+  "/icons/puffin-app-192.png",
+  "/icons/puffin-app-512.png",
 ];
 
 async function cacheModuleGraph(cache, moduleUrl, visited = new Set()) {

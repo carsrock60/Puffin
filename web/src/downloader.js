@@ -1,5 +1,6 @@
-import { assertMediaStorageCapacity, getMediaStorageCapacity, saveMediaFile } from "./library.js";
-import { guardReadyPiDownload, MediaCapacityError } from "./media-capacity.js";
+import { assertMediaStorageCapacity, getMediaStorageCapacity, recordPuffinActivity, saveMediaFile } from "./library.js";
+import { formatBytes, guardReadyPiDownload, MediaCapacityError } from "./media-capacity.js";
+import { getDownloadPreferences } from "./download-preferences.js";
 
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
@@ -65,9 +66,86 @@ async function cancelPiDownload(baseUrl, jobId) {
   }
 }
 
+function formatTime(seconds) {
+  if (!Number.isFinite(seconds) || seconds < 0) return "—";
+  const rounded = Math.ceil(seconds);
+  const minutes = Math.floor(rounded / 60);
+  return minutes ? `${minutes}:${String(rounded % 60).padStart(2, "0")}` : `${rounded}s`;
+}
+
+function filenameFromResponse(response, sourceUrl, mimeType) {
+  const disposition = response.headers.get("Content-Disposition") || "";
+  const encoded = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+  const plain = disposition.match(/filename="?([^";]+)"?/i)?.[1];
+  let name = "";
+  try { name = encoded ? decodeURIComponent(encoded) : (plain || ""); } catch { name = plain || ""; }
+  if (!name) {
+    try { name = decodeURIComponent(new URL(sourceUrl).pathname.split("/").pop() || ""); } catch { name = ""; }
+  }
+  if (!/\.[a-z0-9]{2,5}$/i.test(name) && (mimeType.startsWith("audio/") || mimeType.startsWith("video/"))) {
+    const extensions = {
+      "audio/aac": "aac", "audio/flac": "flac", "audio/mpeg": "mp3", "audio/ogg": "ogg", "audio/wav": "wav", "audio/x-wav": "wav", "audio/mp4": "m4a",
+      "video/mp4": "mp4", "video/webm": "webm", "video/quicktime": "mov", "video/ogg": "ogv",
+    };
+    const extension = extensions[mimeType] || (mimeType.startsWith("audio/") ? "m4a" : "mp4");
+    name = `${name || "puffin-download"}.${extension}`;
+  }
+  return (name || "puffin-download").replace(/[\\/:*?"<>|\r\n]/g, "_").slice(0, 180);
+}
+
+async function readDirectMedia(response, sourceUrl, capacity, onProgress) {
+  const mimeType = (response.headers.get("Content-Type") || "").split(";")[0].trim().toLowerCase();
+  const name = filenameFromResponse(response, sourceUrl, mimeType);
+  if (!mimeType.startsWith("audio/") && !mimeType.startsWith("video/") && !/\.(m4a|mp3|aac|wav|flac|ogg|opus|mp4|m4v|mov|webm|ogv)$/i.test(name)) {
+    await response.body?.cancel();
+    throw new Error("This link did not return a recognizable audio or video file. Use a direct media-file URL.");
+  }
+  if (!response.body?.getReader) throw new Error("This browser cannot stream the response. Try the Raspberry Pi download option.");
+  const total = Number(response.headers.get("Content-Length")) || 0;
+  if (total && total > capacity.remainingBytes) {
+    await response.body.cancel();
+    await assertMediaStorageCapacity(total);
+  }
+  const reader = response.body.getReader();
+  const chunks = [];
+  const started = Date.now();
+  let received = 0;
+  let lastReceived = 0;
+  let lastTime = started;
+  let nextCapacityCheck = 1024 * 1024;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      received += value.byteLength;
+      if (received > capacity.remainingBytes) {
+        await reader.cancel();
+        await assertMediaStorageCapacity(received);
+      }
+      if (received >= nextCapacityCheck) {
+        await assertMediaStorageCapacity(received);
+        nextCapacityCheck = received + 1024 * 1024;
+      }
+      chunks.push(value);
+      const now = Date.now();
+      const speed = (received - lastReceived) / Math.max(0.001, (now - lastTime) / 1000);
+      const averageSpeed = received / Math.max(0.001, (now - started) / 1000);
+      onProgress({ received, total, speed, eta: total ? (total - received) / Math.max(averageSpeed, 1) : null });
+      lastReceived = received;
+      lastTime = now;
+    }
+  } catch (error) {
+    try { await reader.cancel(); } catch { /* stream already closed */ }
+    throw error;
+  }
+  if (total && received !== total) throw new Error("The connection ended before the full file arrived. Try again.");
+  await assertMediaStorageCapacity(received);
+  return { blob: new Blob(chunks, { type: mimeType || "application/octet-stream" }), name, mimeType };
+}
+
 export function initializeDownloader() {
   const form = document.querySelector("#download-form");
-  const piAddress = document.querySelector("#pi-address");
+  const piAddress = document.querySelector("#settings-pi-address");
   const youtubeUrl = document.querySelector("#youtube-url");
   const youtubeLinkField = document.querySelector("#youtube-link-field");
   const downloadSourceLink = document.querySelector("#download-source-link");
@@ -81,17 +159,24 @@ export function initializeDownloader() {
   const youtubeSelectedTitle = document.querySelector("#youtube-selected-title");
   const youtubeClearSelection = document.querySelector("#youtube-clear-selection");
   const downloadKind = document.querySelector("#download-kind");
-  const checkButton = document.querySelector("#check-pi");
   const submitButton = document.querySelector("#start-download");
   const progress = document.querySelector("#download-progress");
+  const progressDetails = document.querySelector("#download-transfer-details");
+  const downloadLinkLabel = document.querySelector("#download-link-label");
+  const formatField = document.querySelector("#download-format-field");
   const status = document.querySelector("#download-status");
   let downloadSource = "link";
 
   function setDownloadSource(source) {
     downloadSource = source;
     const browsing = source === "browse";
+    const usingPi = getDownloadPreferences().backend === "pi";
     youtubeLinkField.hidden = browsing;
-    youtubeBrowsePanel.hidden = !browsing;
+    youtubeBrowsePanel.hidden = !browsing || !usingPi;
+    formatField.hidden = !usingPi;
+    downloadSourceBrowse.hidden = !usingPi;
+    downloadLinkLabel.textContent = usingPi ? "YouTube link" : "Direct media URL";
+    youtubeUrl.placeholder = usingPi ? "https://www.youtube.com/watch?v=…" : "https://example.com/audio.m4a";
     youtubeUrl.required = !browsing;
     downloadSourceLink.classList.toggle("is-selected", !browsing);
     downloadSourceBrowse.classList.toggle("is-selected", browsing);
@@ -157,7 +242,7 @@ export function initializeDownloader() {
       const choose = document.createElement("button");
       choose.className = "secondary-button youtube-result-choose";
       choose.type = "button";
-      choose.textContent = "Download this";
+      choose.textContent = "Choose";
       choose.addEventListener("click", () => {
         youtubeUrl.value = video.url;
         youtubeSelectedTitle.textContent = video.title || "Selected video";
@@ -172,6 +257,10 @@ export function initializeDownloader() {
   }
 
   async function searchYouTube() {
+    if (getDownloadPreferences().backend !== "pi") {
+      youtubeSearchStatus.textContent = "YouTube downloads need the Raspberry Pi. Select Raspberry Pi in Settings → Downloads.";
+      return;
+    }
     const query = youtubeSearchQuery.value.trim();
     if (!query) {
       youtubeSearchStatus.textContent = "Enter a search term first.";
@@ -211,33 +300,33 @@ export function initializeDownloader() {
     if (downloadSource === "link") youtubeSelectedVideo.hidden = true;
   });
 
-  try {
-    piAddress.value = localStorage.getItem("puffin-pi-address") || "";
-  } catch {
-    // The address can still be entered and used if local storage is unavailable.
+  window.addEventListener("puffin:download-pick", (event) => {
+    const query = event.detail?.query?.trim();
+    if (!query) return;
+    if (getDownloadPreferences().backend !== "pi") {
+      setDownloadSource("link");
+      setStatus(status, "To find this pick on YouTube, choose Raspberry Pi in Settings → Downloads.");
+      return;
+    }
+    setDownloadSource("browse");
+    youtubeUrl.value = "";
+    youtubeSelectedVideo.hidden = true;
+    youtubeSearchQuery.value = query;
+    youtubeSearchResults.replaceChildren();
+    youtubeSearchStatus.textContent = "Searching YouTube for this pick…";
+    searchYouTube();
+  });
+
+  function applyDownloadPreferences() {
+    const usingPi = getDownloadPreferences().backend === "pi";
+    if (!usingPi && downloadSource === "browse") setDownloadSource("link");
+    else setDownloadSource(downloadSource);
+    setStatus(status, usingPi
+      ? "Pi mode is selected. Paste a YouTube link or browse YouTube to download."
+      : "Device mode downloads direct audio/video links when the host allows browser access.");
   }
-
-  piAddress.addEventListener("change", () => {
-    try {
-      localStorage.setItem("puffin-pi-address", piAddress.value.trim());
-    } catch {
-      // Saving the address is optional; it can be re-entered next time.
-    }
-  });
-
-  checkButton.addEventListener("click", async () => {
-    checkButton.disabled = true;
-    try {
-      const baseUrl = getPiBaseUrl(piAddress.value);
-      setStatus(status, "Checking Pi connection…");
-      await checkPi(baseUrl);
-      setStatus(status, "Pi is connected and ready.");
-    } catch (error) {
-      setStatus(status, error.message);
-    } finally {
-      checkButton.disabled = false;
-    }
-  });
+  window.addEventListener("puffin:download-preferences-updated", applyDownloadPreferences);
+  applyDownloadPreferences();
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -245,13 +334,57 @@ export function initializeDownloader() {
     if (!youtubeUrl.value.trim() || !hasSelectedBrowseResult) {
       setStatus(status, downloadSource === "browse"
         ? "Search YouTube and choose a video before downloading."
-        : "Enter a YouTube link before downloading.");
+        : "Enter a direct media-file URL before downloading.");
+      return;
+    }
+    const preferences = getDownloadPreferences();
+    if (preferences.backend !== "pi" && downloadSource === "browse") {
+      setStatus(status, "Select Raspberry Pi in Settings → Downloads to use YouTube.");
       return;
     }
     submitButton.disabled = true;
-    checkButton.disabled = true;
     progress.hidden = false;
     progress.value = 0;
+    progressDetails.hidden = false;
+    progressDetails.textContent = "Preparing download…";
+
+    if (preferences.backend === "device") {
+      try {
+        const sourceUrl = new URL(youtubeUrl.value.trim());
+        if (sourceUrl.protocol !== "https:" && sourceUrl.protocol !== "http:") throw new Error("Use an HTTP or HTTPS direct media URL.");
+        const capacity = await getMediaStorageCapacity();
+        if (capacity.remainingBytes <= 0) throw new Error("Puffin media storage limit reached. Delete files or raise the limit before downloading.");
+        setStatus(status, "Connecting to the media source…");
+        const response = await fetch(sourceUrl.href);
+        if (!response.ok) throw new Error(`The media source returned ${response.status}.`);
+        const media = await readDirectMedia(response, sourceUrl.href, capacity, ({ received, total, speed, eta }) => {
+          progress.value = total ? Math.min(100, (received / total) * 100) : 0;
+          if (!total) progress.removeAttribute("value");
+          else progress.setAttribute("value", String(progress.value));
+          const amount = total ? `${formatBytes(received)} of ${formatBytes(total)}` : `${formatBytes(received)} downloaded`;
+          const estimate = eta === null ? "time remaining unavailable" : `${formatTime(eta)} remaining`;
+          progressDetails.textContent = `${amount} · ${formatBytes(speed)}/s · ${estimate}`;
+          setStatus(status, "Downloading on this device…");
+        });
+        setStatus(status, "Saving to your Puffin library…");
+        progressDetails.textContent = `${formatBytes(media.blob.size)} · Saving locally…`;
+        await saveMediaFile(media.blob, { name: media.name, type: media.mimeType || media.blob.type });
+        recordPuffinActivity("downloads").catch((error) => console.warn("Could not record completed download:", error));
+        window.dispatchEvent(new Event("puffin:library-updated"));
+        progress.value = 100;
+        progress.setAttribute("value", "100");
+        progressDetails.textContent = `${formatBytes(media.blob.size)} · Complete`;
+        setStatus(status, "Saved to your Puffin library on this device.");
+      } catch (error) {
+        setStatus(status, error.message === "Failed to fetch"
+          ? "The source blocked browser access or could not be reached. Try a direct file URL that permits CORS, or configure the Pi in Settings."
+          : error.message || "The download failed.");
+      } finally {
+        submitButton.disabled = false;
+        if (progress.value < 100) progress.hidden = true;
+      }
+      return;
+    }
 
     let baseUrl;
     let jobId;
@@ -263,11 +396,6 @@ export function initializeDownloader() {
       const capacity = await getMediaStorageCapacity();
       if (capacity.remainingBytes <= 0) {
         throw new Error("Puffin media storage limit reached. Delete files or raise the limit before downloading.");
-      }
-      try {
-        localStorage.setItem("puffin-pi-address", baseUrl);
-      } catch {
-        // Saving the address is optional; the current download can proceed.
       }
       setStatus(status, "Connecting to the Pi…");
       await checkPi(baseUrl);
@@ -282,9 +410,19 @@ export function initializeDownloader() {
       let currentJob = job;
       while (["queued", "downloading", "converting"].includes(currentJob.status)) {
         progress.value = currentJob.progress || 0;
-        if (currentJob.status === "queued") setStatus(status, "Pi download queued…");
-        else if (currentJob.status === "converting") setStatus(status, "Converting media on the Pi…");
-        else if (currentJob.progress) setStatus(status, `Downloading on the Pi · ${Math.round(currentJob.progress)}%`);
+        if (currentJob.status === "queued") {
+          setStatus(status, "Pi download queued…");
+          progressDetails.textContent = "Waiting for the Pi to start the download…";
+        }
+        else if (currentJob.status === "converting") {
+          setStatus(status, "Converting media on the Pi…");
+          progressDetails.textContent = "Converting media on the Pi…";
+        }
+        else if (currentJob.progress) {
+          setStatus(status, `Downloading on the Pi · ${Math.round(currentJob.progress)}%`);
+          const details = [currentJob.speed, currentJob.eta ? `${currentJob.eta} remaining` : ""].filter(Boolean);
+          progressDetails.textContent = details.length ? details.join(" · ") : "Calculating transfer speed and remaining time…";
+        }
         else setStatus(status, "Downloading on the Pi…");
 
         await sleep(1200);
@@ -307,6 +445,7 @@ export function initializeDownloader() {
       }
 
       progress.value = 100;
+      progressDetails.textContent = "Download complete · Saving to your Puffin library";
       setStatus(status, "Receiving file from the Pi…");
       transferStarted = true;
       const fileResponse = await fetch(`${baseUrl}/api/downloads/${jobId}/file`);
@@ -315,10 +454,18 @@ export function initializeDownloader() {
         throw new Error(payload.error || `File transfer failed (${fileResponse.status}).`);
       }
 
-      const mediaBlob = await fileResponse.blob();
+      const piMedia = await readDirectMedia(fileResponse, youtubeUrl.value.trim(), capacity, ({ received, total, speed, eta }) => {
+        progress.value = total ? Math.min(100, (received / total) * 100) : 0;
+        if (!total) progress.removeAttribute("value");
+        else progress.setAttribute("value", String(progress.value));
+        const amount = total ? `${formatBytes(received)} of ${formatBytes(total)}` : `${formatBytes(received)} received`;
+        progressDetails.textContent = `${amount} · ${formatBytes(speed)}/s · ${eta === null ? "time remaining unavailable" : `${formatTime(eta)} remaining`}`;
+        setStatus(status, "Receiving file from the Pi…");
+      });
+      const mediaBlob = piMedia.blob;
       setStatus(status, "Saving to this device…");
       const encodedName = fileResponse.headers.get("X-Download-Name");
-      let filename = `puffin-download.${downloadKind.value === "audio" ? "m4a" : "mp4"}`;
+      let filename = piMedia.name || `puffin-download.${downloadKind.value === "audio" ? "m4a" : "mp4"}`;
       if (encodedName) {
         try {
           filename = decodeURIComponent(encodedName);
@@ -336,6 +483,7 @@ export function initializeDownloader() {
       }
       await saveMediaFile(mediaBlob, { name: filename, type: currentJob.mime_type || mediaBlob.type });
       savedLocally = true;
+      recordPuffinActivity("downloads").catch((statsError) => console.warn("Could not record completed download:", statsError));
       window.dispatchEvent(new Event("puffin:library-updated"));
 
       try {
@@ -347,6 +495,9 @@ export function initializeDownloader() {
       }
     } catch (error) {
       setStatus(status, error.message || "The download failed.");
+      if (jobId && !savedLocally && !(error instanceof MediaCapacityError)) {
+        recordPuffinActivity("failedJobs", 1, error.message || "The download failed.").catch((statsError) => console.warn("Could not record download failure:", statsError));
+      }
       if (jobId && baseUrl && !savedLocally) {
         if (transferStarted && error instanceof MediaCapacityError) {
           try {
@@ -363,8 +514,8 @@ export function initializeDownloader() {
       }
     } finally {
       submitButton.disabled = false;
-      checkButton.disabled = false;
       progress.hidden = true;
+      progressDetails.hidden = true;
     }
   });
 }

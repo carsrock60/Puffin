@@ -3,8 +3,11 @@ import {
   getMediaStorageLimit,
   listMediaFiles,
   setMediaStorageLimit,
+  clearRecentlyPlayed,
 } from "./library.js";
 import { formatBytes, getMediaCapacityState } from "./media-capacity.js";
+import { getHomePreferences, saveHomePreferences } from "./home-preferences.js";
+import { getDownloadPreferences, saveDownloadPreferences } from "./download-preferences.js";
 
 export function initializeSettings() {
   const dialog = document.querySelector("#settings-dialog");
@@ -21,7 +24,27 @@ export function initializeSettings() {
   const capacityProgress = document.querySelector("#settings-capacity-progress");
   const capacityWarning = document.querySelector("#settings-capacity-warning");
   const storageStatus = document.querySelector("#settings-storage-status");
+  const showRecent = document.querySelector("#settings-show-recent");
+  const showPicks = document.querySelector("#settings-show-picks");
+  const musicAtlasForm = document.querySelector("#settings-musicatlas-form");
+  const musicAtlasKey = document.querySelector("#settings-musicatlas-key");
+  const homeStatus = document.querySelector("#settings-home-status");
+  const clearHistoryButton = document.querySelector("#settings-clear-history");
+  const downloadBackend = document.querySelector("#settings-download-backend");
+  const piOptions = document.querySelector("#settings-pi-options");
+  const piAddress = document.querySelector("#settings-pi-address");
+  const checkPiButton = document.querySelector("#settings-check-pi");
+  const downloadStatus = document.querySelector("#settings-download-status");
   let currentLibraryBytes = 0;
+
+  const homePreferences = getHomePreferences();
+  showRecent.checked = homePreferences.showRecentlyPlayed;
+  showPicks.checked = homePreferences.showMusicPicks;
+  musicAtlasKey.value = homePreferences.musicAtlasApiKey;
+  const downloadPreferences = getDownloadPreferences();
+  downloadBackend.value = downloadPreferences.backend;
+  piAddress.value = downloadPreferences.piAddress;
+  piOptions.hidden = downloadBackend.value !== "pi";
 
   mediaLimitInput.value = (getMediaStorageLimit() / 1024 ** 3).toFixed(1);
 
@@ -90,6 +113,68 @@ export function initializeSettings() {
     button.addEventListener("click", () => selectSection(button.dataset.settingsSection));
   });
 
+  function persistHomeVisibility() {
+    try {
+      saveHomePreferences({
+        showRecentlyPlayed: showRecent.checked,
+        showMusicPicks: showPicks.checked,
+        musicAtlasApiKey: musicAtlasKey.value,
+      });
+      homeStatus.textContent = "Home preferences saved on this device.";
+    } catch (error) {
+      homeStatus.textContent = error.message;
+    }
+  }
+  showRecent.addEventListener("change", persistHomeVisibility);
+  showPicks.addEventListener("change", persistHomeVisibility);
+  musicAtlasForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    persistHomeVisibility();
+  });
+  function persistDownloadPreferences() {
+    try {
+      saveDownloadPreferences({ backend: downloadBackend.value, piAddress: piAddress.value });
+      piOptions.hidden = downloadBackend.value !== "pi";
+      downloadStatus.textContent = "Download settings saved on this device.";
+    } catch {
+      downloadStatus.textContent = "Puffin could not save download settings on this device.";
+    }
+  }
+  downloadBackend.addEventListener("change", persistDownloadPreferences);
+  piAddress.addEventListener("change", persistDownloadPreferences);
+  checkPiButton.addEventListener("click", async () => {
+    checkPiButton.disabled = true;
+    try {
+      const parsed = new URL(piAddress.value.trim());
+      if (parsed.protocol !== "https:" || parsed.pathname !== "/" || parsed.search || parsed.hash || parsed.username || parsed.password) {
+        throw new Error("Enter the Pi's HTTPS Tailscale Serve address.");
+      }
+      const response = await fetch(`${parsed.origin}/api/health`);
+      if (!response.ok) throw new Error(`Pi returned ${response.status}.`);
+      const health = await response.json();
+      if (!health.ok) throw new Error("The Pi service did not return a healthy status.");
+      saveDownloadPreferences({ backend: downloadBackend.value, piAddress: piAddress.value });
+      downloadStatus.textContent = "Pi is connected and ready.";
+    } catch (error) {
+      downloadStatus.textContent = error.message === "Failed to fetch"
+        ? "Could not reach the Pi. Check Tailscale, its HTTPS address, and allowed origins."
+        : error.message || "Could not reach the Pi.";
+    } finally {
+      checkPiButton.disabled = false;
+    }
+  });
+  clearHistoryButton.addEventListener("click", async () => {
+    if (!window.confirm("Clear all recently played history on this device?")) return;
+    clearHistoryButton.disabled = true;
+    try {
+      await clearRecentlyPlayed();
+      homeStatus.textContent = "Recently played history cleared.";
+    } catch (error) {
+      homeStatus.textContent = error.message || "Could not clear recently played history.";
+    } finally {
+      clearHistoryButton.disabled = false;
+    }
+  });
   backButton.addEventListener("click", () => dialog.close());
   closeButton.addEventListener("click", () => dialog.close());
   dialog.addEventListener("click", (event) => {

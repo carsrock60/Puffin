@@ -1,10 +1,12 @@
 import { assertMediaFits, getMediaCapacityState } from "./media-capacity.js";
 
 const DATABASE_NAME = "puffin-library";
-const DATABASE_VERSION = 2;
+const DATABASE_VERSION = 4;
 const TRACKS_STORE = "tracks";
 const FILES_STORE = "files";
 const PLAYLISTS_STORE = "playlists";
+const HISTORY_STORE = "playHistory";
+const STATS_STORE = "analytics";
 const MEDIA_STORAGE_LIMIT_KEY = "puffin.mediaStorageLimitBytes";
 export const DEFAULT_MEDIA_STORAGE_LIMIT_BYTES = 10 * 1024 ** 3;
 
@@ -65,6 +67,12 @@ function openDatabase() {
       }
       if (!database.objectStoreNames.contains(PLAYLISTS_STORE)) {
         database.createObjectStore(PLAYLISTS_STORE, { keyPath: "id" });
+      }
+      if (!database.objectStoreNames.contains(HISTORY_STORE)) {
+        database.createObjectStore(HISTORY_STORE, { keyPath: "id" });
+      }
+      if (!database.objectStoreNames.contains(STATS_STORE)) {
+        database.createObjectStore(STATS_STORE, { keyPath: "key" });
       }
     };
 
@@ -151,6 +159,7 @@ export async function saveMediaFile(file, metadata = {}) {
     if (capacityError) throw capacityError;
     throw error;
   }
+  window.dispatchEvent(new Event("puffin:library-updated"));
   return record;
 }
 
@@ -176,6 +185,26 @@ export async function listMediaFiles() {
     };
     request.onerror = () => reject(request.error);
   });
+}
+
+export async function updateMediaMetadata(id, updates) {
+  const database = await openDatabase();
+  const transaction = database.transaction(TRACKS_STORE, "readwrite");
+  const completion = transactionComplete(transaction);
+  const store = transaction.objectStore(TRACKS_STORE);
+  const request = store.get(id);
+  let updatedRecord;
+  request.onsuccess = () => {
+    if (!request.result) {
+      transaction.abort();
+      return;
+    }
+    updatedRecord = { ...request.result, ...updates, updatedAt: Date.now() };
+    store.put(updatedRecord);
+  };
+  await completion;
+  window.dispatchEvent(new CustomEvent("puffin:metadata-updated", { detail: updatedRecord }));
+  return updatedRecord;
 }
 
 export async function getMediaBlob(id) {
@@ -206,6 +235,116 @@ export async function deleteMediaFile(id) {
     });
   };
   await completion;
+  window.dispatchEvent(new Event("puffin:library-updated"));
+}
+
+export async function recordMediaPlay(mediaId) {
+  const database = await openDatabase();
+  const transaction = database.transaction(HISTORY_STORE, "readwrite");
+  const completion = transactionComplete(transaction);
+  const store = transaction.objectStore(HISTORY_STORE);
+  const request = store.get("recent");
+  request.onsuccess = () => {
+    const plays = (request.result?.plays || []).filter((play) => play.mediaId !== mediaId);
+    plays.unshift({ mediaId, playedAt: Date.now() });
+    store.put({ id: "recent", plays: plays.slice(0, 30) });
+  };
+  await completion;
+  window.dispatchEvent(new Event("puffin:recently-played-updated"));
+  await updateStats((stats) => {
+    const day = getOrCreateStatsDay(stats, localDateKey());
+    day.plays += 1;
+    day.trackPlays[mediaId] = (day.trackPlays[mediaId] || 0) + 1;
+  });
+}
+
+function localDateKey(timestamp = Date.now()) {
+  const date = new Date(timestamp);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function getOrCreateStatsDay(stats, key) {
+  stats.days ||= {};
+  stats.days[key] ||= { plays: 0, listeningMs: 0, trackPlays: {}, downloads: 0, tagEdits: 0, batchJobs: 0, failedJobs: 0 };
+  return stats.days[key];
+}
+
+async function updateStats(update) {
+  const database = await openDatabase();
+  const transaction = database.transaction(STATS_STORE, "readwrite");
+  const completion = transactionComplete(transaction);
+  const store = transaction.objectStore(STATS_STORE);
+  const request = store.get("summary");
+  request.onsuccess = () => {
+    const stats = request.result || { key: "summary", days: {}, recentErrors: [] };
+    update(stats);
+    store.put(stats);
+  };
+  await completion;
+  window.dispatchEvent(new Event("puffin:stats-updated"));
+}
+
+export async function recordListeningTime(milliseconds) {
+  if (!Number.isFinite(milliseconds) || milliseconds <= 0) return;
+  await updateStats((stats) => {
+    const day = getOrCreateStatsDay(stats, localDateKey());
+    day.listeningMs += Math.round(milliseconds);
+  });
+}
+
+export async function recordPuffinActivity(type, amount = 1, errorMessage = "") {
+  if (!["downloads", "tagEdits", "batchJobs", "failedJobs"].includes(type)) return;
+  const count = Number.isFinite(amount) ? Math.max(0, Math.floor(amount)) : 0;
+  if (!count && !errorMessage) return;
+  await updateStats((stats) => {
+    const day = getOrCreateStatsDay(stats, localDateKey());
+    day[type] += count;
+    if (type === "failedJobs" && errorMessage) {
+      stats.recentErrors ||= [];
+      stats.recentErrors.unshift({ at: Date.now(), message: String(errorMessage).slice(0, 300) });
+      stats.recentErrors = stats.recentErrors.slice(0, 50);
+    }
+  });
+}
+
+export async function getPuffinStats() {
+  const database = await openDatabase();
+  const request = database.transaction(STATS_STORE, "readonly").objectStore(STATS_STORE).get("summary");
+  return new Promise((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result || { key: "summary", days: {}, recentErrors: [] });
+    request.onerror = () => reject(request.error);
+  });
+}
+
+export async function clearRecentlyPlayed() {
+  const database = await openDatabase();
+  const transaction = database.transaction(HISTORY_STORE, "readwrite");
+  const completion = transactionComplete(transaction);
+  transaction.objectStore(HISTORY_STORE).delete("recent");
+  await completion;
+  window.dispatchEvent(new Event("puffin:recently-played-updated"));
+}
+
+export async function listRecentlyPlayed() {
+  const database = await openDatabase();
+  const transaction = database.transaction(HISTORY_STORE, "readonly");
+  const request = transaction.objectStore(HISTORY_STORE).get("recent");
+  const plays = await new Promise((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result?.plays || []);
+    request.onerror = () => reject(request.error);
+  });
+  const mediaRecords = await listMediaFiles();
+  const mediaById = new Map(mediaRecords.map((record) => [record.id, record]));
+  const seen = new Set();
+  return plays
+    .filter((play) => {
+      if (seen.has(play.mediaId)) return false;
+      seen.add(play.mediaId);
+      return true;
+    })
+    .map((play) => mediaById.get(play.mediaId))
+    .filter(Boolean)
+    .slice(0, 30);
 }
 
 export async function listPlaylists() {

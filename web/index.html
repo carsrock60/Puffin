@@ -11,7 +11,7 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="apple-touch-icon" href="/icons/puffin-180.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/icons/puffin-app-180.png" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <title>Puffin — A Music Player</title>
     <link rel="stylesheet" href="/src/styles.css" />
@@ -22,6 +22,9 @@
       <aside class="sidebar" aria-label="Main navigation">
         <p class="brand">Puffin</p>
         <nav class="nav-list" aria-label="Sections">
+          <button class="nav-button" type="button" data-tab="home" aria-current="page">
+            <span class="nav-icon" aria-hidden="true">⌂</span><span>Home</span>
+          </button>
           <button class="nav-button" type="button" data-tab="download">
             <span class="nav-icon" aria-hidden="true">↓</span><span>Download</span>
           </button>
@@ -47,29 +50,51 @@
         </header>
 
         <main>
-          <section class="welcome" id="home-panel" aria-labelledby="home-title">
-            <h1 id="home-title">Puffin: A Music Player</h1>
-            <p>Click an option to get started</p>
+          <section class="panel home-panel" id="home-panel" data-panel="home" aria-labelledby="home-title">
+            <h1 id="home-title">Home</h1>
+            <div class="home-sections">
+              <section class="home-section" id="recently-played-section" aria-labelledby="recently-played-title">
+                <div class="home-section-heading">
+                  <h2 id="recently-played-title">Recently played</h2>
+                  <div class="recent-scroll-controls" aria-label="Recently played controls">
+                    <button id="recent-scroll-left" class="round-button" type="button" aria-label="Scroll recently played left" title="Scroll left" disabled>‹</button>
+                    <button id="recent-scroll-right" class="round-button" type="button" aria-label="Scroll recently played right" title="Scroll right" disabled>›</button>
+                  </div>
+                </div>
+                <p id="recently-played-empty" class="home-empty-state">Your recently played music will appear here.</p>
+                <ol id="recently-played-list" class="recently-played-list" aria-label="Your last 30 played songs" hidden></ol>
+              </section>
+              <section class="home-section" id="music-picks-section" aria-labelledby="music-picks-title">
+                <div class="home-section-heading">
+                  <h2 id="music-picks-title">Music picks</h2>
+                  <div class="music-picks-controls">
+                    <label class="music-picks-sort">
+                      <span>Sort</span>
+                      <select id="music-picks-sort" aria-label="Sort music picks by relevance">
+                        <option value="desc">Most relevant</option>
+                        <option value="asc">Least relevant</option>
+                      </select>
+                    </label>
+                    <button id="music-picks-refresh" class="secondary-button music-picks-refresh" type="button" aria-label="Refresh music picks">↻ <span id="music-picks-refresh-label">Refresh</span></button>
+                  </div>
+                </div>
+                <p id="music-picks-status" class="home-empty-state" role="status" aria-live="polite">Add a MusicAtlas API key in Settings to get music picks.</p>
+                <ol id="music-picks-list" class="music-picks-list" aria-label="Recommended songs" hidden></ol>
+                <p id="musicatlas-attribution" class="musicatlas-attribution" hidden>Music recommendations by <a href="https://musicatlas.ai/" target="_blank" rel="noreferrer">MusicAtlas</a></p>
+              </section>
+            </div>
           </section>
 
           <section class="panel" id="download-panel" data-panel="download" aria-labelledby="download-title" hidden>
             <h1 id="download-title">Download</h1>
-            <p class="muted">Download authorized YouTube audio or video through your private Raspberry Pi.</p>
             <form id="download-form" class="download-form">
-              <div class="pi-connection-row">
-                <label class="form-field pi-address-field">
-                  <span>Pi address</span>
-                  <input id="pi-address" name="pi-address" type="url" inputmode="url" placeholder="https://pi-name.tailnet.ts.net" autocomplete="url" required />
-                </label>
-                <button class="secondary-button" id="check-pi" type="button">Check Pi</button>
-              </div>
-              <div class="download-source-switch" role="group" aria-label="Choose a YouTube source">
-                <button id="download-source-link" class="is-selected" type="button" aria-pressed="true">Paste a link</button>
+              <div class="download-source-switch" role="group" aria-label="Choose download source">
+                <button id="download-source-link" class="is-selected" type="button" aria-pressed="true">Paste a media link</button>
                 <button id="download-source-browse" type="button" aria-pressed="false">Browse YouTube</button>
               </div>
               <label id="youtube-link-field" class="form-field">
-                <span>YouTube link</span>
-                <input id="youtube-url" name="youtube-url" type="url" inputmode="url" placeholder="https://www.youtube.com/watch?v=…" autocomplete="url" required />
+                <span id="download-link-label">Direct media URL</span>
+                <input id="youtube-url" name="youtube-url" type="url" inputmode="url" placeholder="https://example.com/audio.m4a" autocomplete="url" required />
               </label>
               <section id="youtube-browse-panel" class="youtube-browse-panel" aria-label="Search YouTube" hidden>
                 <div class="youtube-search-row">
@@ -86,7 +111,7 @@
                 </div>
                 <ol id="youtube-search-results" class="youtube-search-results" aria-label="YouTube search results"></ol>
               </section>
-              <label class="form-field format-field">
+              <label id="download-format-field" class="form-field format-field" hidden>
                 <span>Format</span>
                 <select id="download-kind" name="download-kind">
                   <option value="audio">Audio · AAC M4A · 192 kb/s target</option>
@@ -95,17 +120,37 @@
               </label>
               <button class="primary-button" id="start-download" type="submit">Download to Puffin</button>
               <progress id="download-progress" max="100" value="0" hidden></progress>
-              <p id="download-status" class="muted" role="status" aria-live="polite">Connect the Pi with Tailscale to start a download.</p>
+              <p id="download-transfer-details" class="download-transfer-details" hidden></p>
+              <p id="download-status" class="muted" role="status" aria-live="polite">Choose a direct media link or configure the Raspberry Pi in Settings to download from YouTube.</p>
             </form>
           </section>
 
           <section class="panel" id="edit-panel" data-panel="edit" aria-labelledby="edit-title" hidden>
             <h1 id="edit-title">Edit</h1>
-            <ul class="placeholder-list">
-              <li>Batch edit music tags</li>
-              <li>Convert between filenames and tags with naming masks</li>
-              <li>Look up metadata online</li>
-            </ul>
+            <div class="edit-toolbar">
+              <label class="edit-select-all"><input id="edit-select-all" type="checkbox" /> Select all</label>
+              <span id="edit-selection-count" class="muted">0 selected</span>
+              <button id="edit-smart-fill" class="secondary-button" type="button">Smart Fill</button>
+            </div>
+            <section class="edit-batch-card" aria-label="Batch metadata editing">
+              <div class="edit-fields">
+                <label class="form-field"><span>Artist</span><input id="batch-artist" type="text" placeholder="Artist" /></label>
+                <label class="form-field"><span>Album</span><input id="batch-album" type="text" placeholder="Album" /></label>
+                <label class="form-field"><span>Genre</span><input id="batch-genre" type="text" placeholder="Genre" /></label>
+                <label class="form-field"><span>Year</span><input id="batch-year" type="text" inputmode="numeric" placeholder="Year" /></label>
+                <button id="apply-batch-tags" class="primary-button" type="button">Apply to selected</button>
+                <button id="batch-artwork-button" class="secondary-button" type="button">Set artwork for selected</button>
+                <input id="batch-artwork-file" type="file" accept="image/*" hidden />
+              </div>
+              <div class="edit-mask-row">
+                <label class="form-field"><span>Naming mask</span><input id="edit-mask" type="text" value="{artist} - {title}" /></label>
+                <button id="filename-to-tags" class="secondary-button" type="button">Filename → tags</button>
+                <button id="tags-to-filename" class="secondary-button" type="button">Tags → filename</button>
+              </div>
+              <p class="edit-mask-help muted">Masks: {artist}, {title}, {album}, {track}, {year}. File extensions are kept automatically.</p>
+            </section>
+            <p id="edit-status" class="muted" role="status" aria-live="polite"></p>
+            <ol id="edit-media-list" class="edit-media-list" aria-label="Editable media"></ol>
           </section>
 
           <section class="panel" id="play-panel" data-panel="play" aria-labelledby="play-title" hidden>
@@ -144,8 +189,59 @@
           </section>
 
           <section class="panel" id="stats-panel" data-panel="stats" aria-labelledby="stats-title" hidden>
-            <h1 id="stats-title">Stats</h1>
-            <p class="muted">Listening history and storage statistics will appear here.</p>
+            <div class="stats-page-heading">
+              <div><h1 id="stats-title">Your Puffin</h1><p class="muted">Your library at a glance</p></div>
+              <div class="stats-range" role="group" aria-label="Analytics time range">
+                <button type="button" data-stats-range="all" aria-pressed="true">All time</button>
+                <button type="button" data-stats-range="30">30 days</button>
+                <button type="button" data-stats-range="7">7 days</button>
+              </div>
+            </div>
+            <div class="stats-overview" aria-label="Library overview">
+              <article class="stats-card"><span>Tracks</span><strong id="stats-track-count">—</strong></article>
+              <article class="stats-card"><span>Videos</span><strong id="stats-video-count">—</strong></article>
+              <article class="stats-card"><span>Listening time</span><strong id="stats-listening-total">—</strong></article>
+              <article class="stats-card"><span>Library storage</span><strong id="stats-storage-used">—</strong></article>
+            </div>
+            <div id="stats-content" class="stats-content">
+              <section class="stats-section" aria-labelledby="stats-listening-title">
+                <div class="stats-section-heading"><div><h2 id="stats-listening-title">Listening activity</h2><p class="muted">Your playback history, stored on this device</p></div></div>
+                <div id="stats-listening-empty" class="stats-empty" hidden>Your listening story starts here. Play something from your library and your activity will appear here.</div>
+                <div id="stats-listening-data" class="stats-listening-data" hidden>
+                  <p id="stats-chart-empty" class="stats-inline-empty" hidden>No listening activity in this period.</p>
+                  <div id="stats-chart-wrap" class="stats-chart-wrap"><div id="stats-chart" class="stats-chart" role="img" aria-label="Listening time chart"></div><div id="stats-chart-labels" class="stats-chart-labels" aria-hidden="true"></div></div>
+                  <div class="stats-highlights">
+                    <article><span>Tracks played this week</span><strong id="stats-week-plays">0</strong></article>
+                    <article><span>Listening streak</span><strong id="stats-streak">—</strong></article>
+                    <article><span>Favorite listening day</span><strong id="stats-favorite-day">—</strong></article>
+                  </div>
+                  <div class="stats-columns">
+                    <article class="stats-list-card"><h3>Most played</h3><ol id="stats-top-tracks"></ol><p class="stats-list-empty" hidden>No played tracks in this period.</p></article>
+                    <article class="stats-list-card"><h3>Top artists</h3><ol id="stats-top-artists"></ol><p class="stats-list-empty" hidden>No artist play data in this period.</p></article>
+                  </div>
+                </div>
+              </section>
+              <section class="stats-section" aria-labelledby="stats-taste-title">
+                <div class="stats-section-heading"><div><h2 id="stats-taste-title">Your music taste</h2><p class="muted">Insights from your local library</p></div></div>
+                <div class="stats-columns">
+                  <article class="stats-list-card"><h3>Common genres</h3><ol id="stats-genres"></ol><p class="stats-list-empty" hidden>Add genre tags to see your library mix.</p></article>
+                  <article class="stats-list-card"><h3>Favorite albums</h3><ol id="stats-albums"></ol><p class="stats-list-empty" hidden>Album favorites appear after you play tagged music.</p></article>
+                  <article class="stats-list-card"><h3>Recently added</h3><ol id="stats-recent-added"></ol><p class="stats-list-empty" hidden>Your newest additions will show here.</p></article>
+                </div>
+              </section>
+              <section class="stats-section" aria-labelledby="stats-activity-title">
+                <div class="stats-section-heading"><div><h2 id="stats-activity-title">Puffin activity</h2><p class="muted">Downloads and edits recorded on this device</p></div></div>
+                <div class="stats-activity-grid">
+                  <article><span>Downloads completed</span><strong id="stats-downloads">0</strong></article>
+                  <article><span>Tag edits</span><strong id="stats-tag-edits">0</strong></article>
+                  <article><span>Batch jobs</span><strong id="stats-batch-jobs">0</strong></article>
+                  <article><span>Failed jobs</span><strong id="stats-failed-jobs">0</strong></article>
+                </div>
+                <div id="stats-errors-wrap" class="stats-errors-wrap" hidden><h3>Recent errors</h3><ol id="stats-errors"></ol></div>
+                <p class="stats-footnote">Analytics stay in this browser. Puffin only counts processing actions it can confirm; it does not estimate time saved.</p>
+              </section>
+            </div>
+            <p id="stats-status" class="muted" role="status" aria-live="polite"></p>
           </section>
         </main>
       </div>
@@ -218,11 +314,17 @@
       </form>
     </dialog>
 
+    <dialog id="artwork-preview" class="artwork-preview-dialog" aria-label="Artwork preview">
+      <button id="artwork-preview-close" class="artwork-preview-close" type="button" aria-label="Close artwork preview">×</button>
+      <img id="artwork-preview-image" alt="Artwork preview" />
+    </dialog>
+
     <dialog id="settings-dialog" class="settings-dialog" aria-labelledby="settings-title">
       <div class="settings-layout">
         <aside class="settings-sidebar" aria-label="Settings sections">
           <p class="settings-sidebar-label">PUFFIN</p>
           <nav class="settings-nav">
+            <button type="button" data-settings-section="home">Home</button>
             <button type="button" data-settings-section="account">Account</button>
             <button type="button" data-settings-section="appearance">Appearance</button>
             <button type="button" data-settings-section="playback">Playback</button>
@@ -239,6 +341,24 @@
             <button id="settings-close" class="settings-close" type="button" aria-label="Close settings" title="Close">×</button>
           </header>
           <div class="settings-content">
+            <section data-settings-panel="home" hidden>
+              <h2>Home</h2>
+              <p class="muted">Choose which listening sections appear on your Home page.</p>
+              <div class="settings-home-options">
+                <label class="settings-toggle-row"><span><strong>Recently played</strong><small>Show your recent listening history.</small></span><input id="settings-show-recent" type="checkbox" checked /></label>
+                <label class="settings-toggle-row"><span><strong>Music picks</strong><small>Show song suggestions based on your local listening history.</small></span><input id="settings-show-picks" type="checkbox" checked /></label>
+              </div>
+              <form id="settings-musicatlas-form" class="settings-storage-form">
+                <label class="form-field" for="settings-musicatlas-key"><span>MusicAtlas API key</span><input id="settings-musicatlas-key" type="password" autocomplete="off" placeholder="Paste your API key" /></label>
+                <p class="muted settings-hint">Puffin saves this key on this device. <a href="https://musicatlas.ai/developer/request-key" target="_blank" rel="noreferrer">Get a free MusicAtlas API key</a>. The free tier includes 100 requests per day.</p>
+                <button class="primary-button" type="submit">Save MusicAtlas key</button>
+                <p id="settings-home-status" class="muted" role="status" aria-live="polite"></p>
+              </form>
+              <div class="settings-clear-history">
+                <div><strong>Recently played history</strong><p class="muted">Remove all songs from the Recently played section.</p></div>
+                <button id="settings-clear-history" class="danger-button" type="button">Clear history</button>
+              </div>
+            </section>
             <section data-settings-panel="account" hidden>
               <h2>Account</h2>
               <p class="muted">Sign in and account sync are planned for a future version.</p>
@@ -272,7 +392,21 @@
             </section>
             <section data-settings-panel="downloads" hidden>
               <h2>Downloads</h2>
-              <p class="muted">Download format and Raspberry Pi preferences are coming soon.</p>
+              <p class="muted">Choose where Puffin downloads media. Device downloads work with direct media file URLs when the host allows browser access. YouTube downloads require the Raspberry Pi downloader.</p>
+              <label class="form-field" for="settings-download-backend"><span>Download on</span>
+                <select id="settings-download-backend">
+                  <option value="device">This device (default)</option>
+                  <option value="pi">Raspberry Pi</option>
+                </select>
+              </label>
+              <div id="settings-pi-options" hidden>
+                <label class="form-field" for="settings-pi-address"><span>Pi HTTPS address</span>
+                  <input id="settings-pi-address" type="url" inputmode="url" placeholder="https://pi-name.tailnet.ts.net" autocomplete="url" />
+                </label>
+                <p class="muted settings-hint">Use the HTTPS address from Tailscale Serve. The Pi must allow this Puffin site in its CORS settings.</p>
+                <button id="settings-check-pi" class="secondary-button" type="button">Check Pi connection</button>
+                <p id="settings-download-status" class="muted" role="status" aria-live="polite"></p>
+              </div>
             </section>
             <section data-settings-panel="privacy" hidden>
               <h2>Privacy</h2>

@@ -4,6 +4,7 @@ import {
   deleteMediaFile,
   deletePlaylist,
   getMediaKind,
+  getMediaBlob,
   listMediaFiles,
   listPlaylists,
   removeMediaFromPlaylist,
@@ -303,30 +304,68 @@ export function initializePlaylistLibrary({ onPlay, onDeleted }) {
     const item = document.createElement("li");
     item.className = "media-item";
 
+    const artwork = document.createElement("img");
+    artwork.className = "media-row-artwork";
+    artwork.src = record.artwork || "/favicon.svg";
+    artwork.alt = "";
+    artwork.addEventListener("error", () => { if (!artwork.src.endsWith("/favicon.svg")) artwork.src = "/favicon.svg"; }, { once: true });
     const info = document.createElement("div");
     info.className = "media-info";
     const name = document.createElement("span");
     name.className = "media-name";
-    name.textContent = record.name;
+    name.textContent = record.title || record.name.replace(/\.[^.]+$/, "");
     const details = document.createElement("span");
     details.className = "media-details";
-    details.textContent = `${record.kind === "video" ? "Video" : "Audio"} · ${formatBytes(record.size)} · Added ${new Date(record.importedAt).toLocaleDateString()}`;
+    const typeAndSize = `${record.kind === "video" ? "Video" : "Audio"} · ${formatBytes(record.size)}`;
+    const formatDuration = (seconds) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
+    const updateDetails = (duration = record.duration) => {
+      details.textContent = [
+        record.artist,
+        record.album,
+        Number.isFinite(duration) && duration > 0 ? formatDuration(duration) : "",
+        typeAndSize,
+        `Added ${new Date(record.importedAt).toLocaleDateString()}`,
+      ].filter(Boolean).join(" · ");
+    };
+    updateDetails();
+    if (!Number.isFinite(record.duration)) {
+      getMediaBlob(record.id).then((blob) => {
+        if (!blob) return;
+        const element = document.createElement(record.kind === "video" ? "video" : "audio");
+        const url = URL.createObjectURL(blob);
+        element.preload = "metadata";
+        element.onloadedmetadata = () => { updateDetails(element.duration); URL.revokeObjectURL(url); };
+        element.onerror = () => URL.revokeObjectURL(url);
+        element.src = url;
+      }).catch(() => {});
+    }
     info.append(name, details);
 
     const actions = document.createElement("div");
     actions.className = "media-actions";
     actions.append(iconButton("Play", ICONS.play, "media-action", () => onPlay(record)));
+    const overflow = document.createElement("details");
+    overflow.className = "media-overflow";
+    const summary = document.createElement("summary");
+    summary.setAttribute("aria-label", `More options for ${record.title || record.name}`);
+    summary.title = "More options";
+    summary.textContent = "•••";
+    const menu = document.createElement("div");
+    menu.className = "media-overflow-menu";
     if (playlist) {
-      actions.append(iconButton("Remove from playlist", ICONS.remove, "media-action secondary", async () => {
+      const remove = document.createElement("button"); remove.type = "button"; remove.textContent = "Remove from playlist";
+      remove.addEventListener("click", async () => {
         await removeMediaFromPlaylist(playlist.id, record.id);
         await render();
         setStatus(`Removed from ${playlist.name}.`);
-      }));
+      }); menu.append(remove);
     } else {
-      actions.append(iconButton("Add to playlist", ICONS.add, "media-action secondary", () => openAddToPlaylistDialog(record)));
+      const add = document.createElement("button"); add.type = "button"; add.textContent = "Add to playlist"; add.addEventListener("click", () => openAddToPlaylistDialog(record)); menu.append(add);
     }
-    actions.append(iconButton("Delete media from this device", ICONS.delete, "media-action danger", () => openDeleteMediaDialog(record)));
-    item.append(info, actions);
+    const removeLibrary = document.createElement("button"); removeLibrary.type = "button"; removeLibrary.className = "danger-menu-action"; removeLibrary.textContent = "Delete from library"; removeLibrary.addEventListener("click", () => openDeleteMediaDialog(record)); menu.append(removeLibrary);
+    overflow.append(summary, menu);
+    actions.append(overflow);
+    item.append(artwork, info, actions);
     return item;
   }
 
@@ -464,6 +503,7 @@ export function initializePlaylistLibrary({ onPlay, onDeleted }) {
   });
 
   window.addEventListener("puffin:library-updated", () => render());
+  window.addEventListener("puffin:metadata-updated", () => render());
   render().then(() => {
     if (mediaRecords.length === 0) setStatus("Your library is empty. Import media to get started.");
     else setStatus(`${mediaRecords.length} ${mediaRecords.length === 1 ? "file" : "files"} in your library.`);

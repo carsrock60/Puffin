@@ -32,6 +32,8 @@ ALLOWED_ORIGINS = {
 JOBS: dict[str, dict] = {}
 JOBS_LOCK = threading.RLock()
 PROGRESS_PATTERN = re.compile(r"\[download\]\s+(\d+(?:\.\d+)?)%")
+SPEED_PATTERN = re.compile(r"\bat\s+([0-9.]+\s*[KMG]?i?B/s)")
+ETA_PATTERN = re.compile(r"\bETA\s+(\d{2}:\d{2}(?::\d{2})?)")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 LOGGER = logging.getLogger("puffin-downloader")
@@ -61,6 +63,8 @@ def _public_job(job: dict) -> dict:
         "id": job["id"],
         "status": job["status"],
         "progress": job["progress"],
+        "speed": job.get("speed"),
+        "eta": job.get("eta"),
         "kind": job["kind"],
         "filename": job.get("filename"),
         "size": job.get("size"),
@@ -194,6 +198,12 @@ def _run_download(job_id: str) -> None:
                     current_job["status"] = "downloading"
                     current_job["progress"] = min(99, max(0, float(match.group(1))))
                     current_job["updated_at"] = time.time()
+                speed_match = SPEED_PATTERN.search(line)
+                eta_match = ETA_PATTERN.search(line)
+                if speed_match:
+                    current_job["speed"] = speed_match.group(1)
+                if eta_match:
+                    current_job["eta"] = eta_match.group(1)
 
         return_code = process.wait()
         with JOBS_LOCK:
@@ -493,6 +503,8 @@ class PuffinHandler(BaseHTTPRequestHandler):
                 "kind": kind,
                 "status": "queued",
                 "progress": 0,
+                "speed": None,
+                "eta": None,
                 "error": None,
                 "filename": None,
                 "file_path": None,

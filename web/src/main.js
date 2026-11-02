@@ -1,11 +1,13 @@
-import { getMediaBlob } from "./library.js";
+import { getMediaBlob, recordMediaPlay, recordListeningTime } from "./library.js";
 import { initializeDownloader } from "./downloader.js";
 import { initializePlaylistLibrary } from "./playlist-library.js";
 import { initializeSettings } from "./settings.js";
+import { initializeEdit } from "./edit.js";
+import { initializeHome } from "./home.js";
+import { initializeStats } from "./stats.js";
 
 const tabButtons = document.querySelectorAll("[data-tab]");
 const panels = document.querySelectorAll("[data-panel]");
-const homePanel = document.querySelector("#home-panel");
 
 tabButtons.forEach((button) => {
   button.addEventListener("click", () => {
@@ -20,7 +22,7 @@ tabButtons.forEach((button) => {
       panel.hidden = panel.dataset.panel !== selectedTab;
     });
 
-    homePanel.hidden = true;
+    window.dispatchEvent(new CustomEvent("puffin:tab-changed", { detail: selectedTab }));
   });
 });
 
@@ -52,6 +54,7 @@ const playerClose = document.querySelector("#player-close");
 const videoTheater = document.querySelector("#video-theater");
 const videoTheaterStage = document.querySelector("#video-theater-stage");
 const playerTrack = document.querySelector(".player-track");
+playerArtwork.addEventListener("error", () => { playerArtwork.src = "/favicon.svg"; }, { once: true });
 
 let activeMediaId = null;
 let activeObjectUrl = null;
@@ -60,6 +63,8 @@ let isSeeking = false;
 let playerPinnedOpen = false;
 let playerCollapseRequested = false;
 let playerPinnedOpenBeforeTheater = false;
+let playbackSample = null;
+let pendingListeningMs = 0;
 
 function setDockRevealed(revealed) {
   playerDock.classList.toggle("is-revealed", revealed);
@@ -101,12 +106,37 @@ function updatePlayerControls() {
   playerToggle.title = playing ? "Pause" : "Play";
 }
 
-function setLibraryStatus(message) {
-  libraryStatus.textContent = message;
+function sampleListeningTime(player, allowStopped = false) {
+  if (player !== activePlayer || player !== audioPlayer || (!allowStopped && (player.paused || player.ended))) {
+    playbackSample = null;
+    return;
+  }
+  const now = performance.now();
+  const position = player.currentTime;
+  if (playbackSample) {
+    const elapsed = now - playbackSample.wallTime;
+    const mediaElapsed = position - playbackSample.position;
+    if (elapsed > 0 && elapsed <= 7000 && mediaElapsed > 0 && mediaElapsed <= (elapsed / 1000) * 2.5 + 0.75) {
+      pendingListeningMs += elapsed;
+    }
+  }
+  playbackSample = { wallTime: now, position };
+  if (pendingListeningMs >= 15000) flushListeningTime();
+}
+
+async function flushListeningTime() {
+  const milliseconds = pendingListeningMs;
+  pendingListeningMs = 0;
+  if (milliseconds > 0) {
+    try { await recordListeningTime(milliseconds); }
+    catch (error) { console.warn("Could not save listening time:", error); }
+  }
 }
 
 async function startPlayback(record) {
   try {
+    sampleListeningTime(activePlayer);
+    await flushListeningTime();
     const blob = await getMediaBlob(record.id);
     if (!blob) throw new Error("The media file is missing from local storage.");
 
@@ -128,7 +158,10 @@ async function startPlayback(record) {
     playerReveal.setAttribute("aria-expanded", "true");
     playerReveal.setAttribute("aria-label", "Hide player controls");
     playerReveal.title = "Hide player controls";
-    currentMediaTitle.textContent = record.name;
+    currentMediaTitle.textContent = record.title || record.name.replace(/\.[^.]+$/, "");
+    playerSubtitle.textContent = record.artist || "Puffin Library";
+    if (record.artwork) playerArtwork.src = record.artwork;
+    else playerArtwork.src = "/favicon.svg";
     playerDock.hidden = false;
     mediaPlayer.hidden = false;
 
@@ -150,6 +183,7 @@ async function startPlayback(record) {
 
     try {
       await player.play();
+      recordMediaPlay(record.id).catch((error) => console.warn("Could not update recent plays:", error));
       updatePlayerControls();
       setLibraryStatus(`Playing ${record.name}`);
     } catch (error) {
@@ -162,6 +196,8 @@ async function startPlayback(record) {
 }
 
 function stopPlayback() {
+  sampleListeningTime(activePlayer);
+  flushListeningTime();
   if (videoTheater.open) videoTheater.close();
   audioPlayer.pause();
   videoPlayer.pause();
@@ -195,10 +231,31 @@ initializePlaylistLibrary({
   },
 });
 
+window.addEventListener("puffin:metadata-updated", (event) => {
+  const record = event.detail;
+  if (!record || record.id !== activeMediaId) return;
+  currentMediaTitle.textContent = record.title || record.name.replace(/\.[^.]+$/, "");
+  playerSubtitle.textContent = record.kind === "video" ? `Video · ${record.artist || "Puffin Library"}` : (record.artist || "Puffin Library");
+  playerArtwork.src = record.artwork || "/favicon.svg";
+});
+
 for (const player of [audioPlayer, videoPlayer]) {
   for (const eventName of ["loadedmetadata", "durationchange", "timeupdate", "play", "pause", "ended"]) {
     player.addEventListener(eventName, updatePlayerControls);
   }
+  player.addEventListener("play", () => {
+    if (player === activePlayer && player === audioPlayer) playbackSample = { wallTime: performance.now(), position: player.currentTime };
+  });
+  player.addEventListener("timeupdate", () => sampleListeningTime(player));
+  for (const eventName of ["pause", "ended"]) {
+    player.addEventListener(eventName, () => {
+      sampleListeningTime(player, true);
+      flushListeningTime();
+    });
+  }
+  player.addEventListener("seeking", () => {
+    if (player === activePlayer) playbackSample = { wallTime: performance.now(), position: player.currentTime };
+  });
   player.addEventListener("error", () => {
     setLibraryStatus(getPlaybackErrorMessage(player));
   });
@@ -227,6 +284,12 @@ function commitSeek() {
   isSeeking = false;
   updatePlayerControls();
 }
+
+window.addEventListener("pagehide", () => { sampleListeningTime(activePlayer); flushListeningTime(); });
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) { sampleListeningTime(activePlayer); flushListeningTime(); }
+  else if (activePlayer && !activePlayer.paused) playbackSample = { wallTime: performance.now(), position: activePlayer.currentTime };
+});
 
 playerSeek.addEventListener("pointerdown", () => {
   isSeeking = true;
@@ -343,6 +406,9 @@ videoTheater.addEventListener("close", restoreVideoToPlayer);
 
 initializeDownloader();
 initializeSettings();
+initializeEdit();
+initializeHome({ onPlay: startPlayback });
+initializeStats();
 
 if ("serviceWorker" in navigator && window.isSecureContext) {
   window.addEventListener("load", () => {
