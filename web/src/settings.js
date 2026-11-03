@@ -30,7 +30,6 @@ export function initializeSettings() {
   const musicAtlasKey = document.querySelector("#settings-musicatlas-key");
   const homeStatus = document.querySelector("#settings-home-status");
   const clearHistoryButton = document.querySelector("#settings-clear-history");
-  const downloadBackend = document.querySelector("#settings-download-backend");
   const piOptions = document.querySelector("#settings-pi-options");
   const piAddress = document.querySelector("#settings-pi-address");
   const checkPiButton = document.querySelector("#settings-check-pi");
@@ -42,9 +41,8 @@ export function initializeSettings() {
   showPicks.checked = homePreferences.showMusicPicks;
   musicAtlasKey.value = homePreferences.musicAtlasApiKey;
   const downloadPreferences = getDownloadPreferences();
-  downloadBackend.value = downloadPreferences.backend;
   piAddress.value = downloadPreferences.piAddress;
-  piOptions.hidden = downloadBackend.value !== "pi";
+  piOptions.hidden = false;
 
   mediaLimitInput.value = (getMediaStorageLimit() / 1024 ** 3).toFixed(1);
 
@@ -133,14 +131,12 @@ export function initializeSettings() {
   });
   function persistDownloadPreferences() {
     try {
-      saveDownloadPreferences({ backend: downloadBackend.value, piAddress: piAddress.value });
-      piOptions.hidden = downloadBackend.value !== "pi";
+      saveDownloadPreferences({ piAddress: piAddress.value });
       downloadStatus.textContent = "Download settings saved on this device.";
     } catch {
       downloadStatus.textContent = "Puffin could not save download settings on this device.";
     }
   }
-  downloadBackend.addEventListener("change", persistDownloadPreferences);
   piAddress.addEventListener("change", persistDownloadPreferences);
   checkPiButton.addEventListener("click", async () => {
     checkPiButton.disabled = true;
@@ -153,7 +149,7 @@ export function initializeSettings() {
       if (!response.ok) throw new Error(`Pi returned ${response.status}.`);
       const health = await response.json();
       if (!health.ok) throw new Error("The Pi service did not return a healthy status.");
-      saveDownloadPreferences({ backend: downloadBackend.value, piAddress: piAddress.value });
+      saveDownloadPreferences({ piAddress: piAddress.value });
       downloadStatus.textContent = "Pi is connected and ready.";
     } catch (error) {
       downloadStatus.textContent = error.message === "Failed to fetch"

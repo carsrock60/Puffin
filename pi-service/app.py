@@ -37,14 +37,27 @@ ETA_PATTERN = re.compile(r"\bETA\s+(\d{2}:\d{2}(?::\d{2})?)")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 LOGGER = logging.getLogger("puffin-downloader")
+AUDIO_MIME_TYPES = {
+    "aac": "audio/aac",
+    "aiff": "audio/aiff",
+    "flac": "audio/flac",
+    "m4a": "audio/mp4",
+    "mp3": "audio/mpeg",
+    "oga": "audio/ogg",
+    "ogg": "audio/ogg",
+    "opus": "audio/ogg",
+    "wav": "audio/wav",
+    "webm": "audio/webm",
+}
+SUPPORTED_AUDIO_EXTENSIONS = set(AUDIO_MIME_TYPES)
 
 
 def _is_allowed_media_url(value: object) -> bool:
     if not isinstance(value, str) or len(value) > 4096:
         return False
-    if value.startswith("ytsearch1:"):
-        query = value.removeprefix("ytsearch1:").strip()
-        return bool(query) and len(query) <= 200 and not any(ord(character) < 32 for character in query)
+    if value.startswith(("ytsearch:", "ytsearch1:")):
+        query = value.split(":", 1)[1].strip()
+        return bool(query) and len(query) <= 1000 and not any(ord(character) < 32 for character in query)
     try:
         parsed = urlsplit(value)
         hostname = (parsed.hostname or "").lower().rstrip(".")
@@ -59,6 +72,36 @@ def _is_allowed_media_url(value: object) -> bool:
 def _safe_filename(path: Path) -> str:
     name = path.name.replace("\r", "").replace("\n", "").replace('"', "'")
     return name or "puffin-media"
+
+
+def _ensure_supported_audio(path: Path, supported_formats: list[str], job: dict) -> Path:
+    extension = path.suffix.lower().lstrip(".")
+    if extension in supported_formats and extension in SUPPORTED_AUDIO_EXTENSIONS:
+        return path
+
+    output_path = path.with_suffix(".m4a")
+    with JOBS_LOCK:
+        job["status"] = "converting"
+        job["progress"] = 99
+        job["updated_at"] = time.time()
+
+    common_args = ["ffmpeg", "-nostdin", "-y", "-i", str(path), "-vn"]
+    copied = subprocess.run(
+        [*common_args, "-c:a", "copy", "-movflags", "+faststart", str(output_path)],
+        capture_output=True,
+        text=True,
+    )
+    if copied.returncode != 0:
+        encoded = subprocess.run(
+            [*common_args, "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(output_path)],
+            capture_output=True,
+            text=True,
+        )
+        if encoded.returncode != 0:
+            raise RuntimeError("Could not convert this audio to a Puffin-compatible M4A file")
+
+    path.unlink(missing_ok=True)
+    return output_path
 
 
 def _public_job(job: dict) -> dict:
@@ -146,12 +189,7 @@ def _run_download(job_id: str) -> None:
     if job["kind"] == "audio":
         command.extend([
             "--format",
-            "bestaudio/best",
-            "--extract-audio",
-            "--audio-format",
-            "m4a",
-            "--audio-quality",
-            "192K",
+            "bestaudio",
         ])
     else:
         command.extend([
@@ -193,7 +231,7 @@ def _run_download(job_id: str) -> None:
                 if current_job["cancel_requested"]:
                     process.terminate()
                     break
-                if "[ExtractAudio]" in line or "[Merger]" in line:
+                if "[Merger]" in line or ("[ExtractAudio]" in line and "Not converting audio" not in line):
                     current_job["status"] = "converting"
                     current_job["updated_at"] = time.time()
                 match = PROGRESS_PATTERN.search(line)
@@ -235,6 +273,8 @@ def _run_download(job_id: str) -> None:
             raise RuntimeError("yt-dlp completed without producing a media file")
 
         output_file = max(output_files, key=lambda path: path.stat().st_mtime)
+        if job["kind"] == "audio":
+            output_file = _ensure_supported_audio(output_file, job.get("supported_audio_formats") or [], job)
         output_size = output_file.stat().st_size
         if output_size > MAX_DOWNLOAD_BYTES:
             raise RuntimeError("Downloaded file exceeds the configured size limit")
@@ -250,7 +290,7 @@ def _run_download(job_id: str) -> None:
                 "filename": _safe_filename(output_file),
                 "file_path": str(output_file),
                 "size": output_size,
-                "mime_type": mimetypes.guess_type(output_file.name)[0] or "application/octet-stream",
+                "mime_type": AUDIO_MIME_TYPES.get(output_file.suffix.lower().lstrip(".")) if job["kind"] == "audio" else (mimetypes.guess_type(output_file.name)[0] or "application/octet-stream"),
                 "ready_at": time.time(),
                 "updated_at": time.time(),
             })
@@ -472,6 +512,14 @@ class PuffinHandler(BaseHTTPRequestHandler):
         if not isinstance(kind, str) or kind not in {"audio", "video"}:
             self._json(400, {"error": "Choose audio (M4A) or video (MP4)."})
             return
+        requested_audio_formats = request.get("supported_audio_formats", [])
+        if not isinstance(requested_audio_formats, list):
+            requested_audio_formats = []
+        supported_audio_formats = [
+            extension.lower()
+            for extension in requested_audio_formats
+            if isinstance(extension, str) and extension.lower() in SUPPORTED_AUDIO_EXTENSIONS
+        ]
 
         DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
         with JOBS_LOCK:
@@ -504,6 +552,7 @@ class PuffinHandler(BaseHTTPRequestHandler):
                 "id": job_id,
                 "url": url,
                 "kind": kind,
+                "supported_audio_formats": supported_audio_formats,
                 "status": "queued",
                 "progress": 0,
                 "speed": None,

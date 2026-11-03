@@ -1,6 +1,5 @@
 import { assertMediaStorageCapacity, getMediaStorageCapacity, recordPuffinActivity, saveMediaFile } from "./library.js";
 import { formatBytes, guardReadyPiDownload, MediaCapacityError } from "./media-capacity.js";
-import { getDownloadPreferences } from "./download-preferences.js";
 
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
@@ -74,6 +73,73 @@ function formatTime(seconds) {
   const rounded = Math.ceil(seconds);
   const minutes = Math.floor(rounded / 60);
   return minutes ? `${minutes}:${String(rounded % 60).padStart(2, "0")}` : `${rounded}s`;
+}
+
+function parseCsv(text) {
+  const rows = [];
+  let row = [];
+  let cell = "";
+  let quoted = false;
+  const input = text.replace(/^\uFEFF/, "");
+  for (let index = 0; index < input.length; index += 1) {
+    const character = input[index];
+    if (quoted) {
+      if (character === '"' && input[index + 1] === '"') {
+        cell += '"';
+        index += 1;
+      } else if (character === '"') quoted = false;
+      else cell += character;
+    } else if (character === '"' && cell.length === 0) quoted = true;
+    else if (character === ",") {
+      row.push(cell);
+      cell = "";
+    } else if (character === "\n" || character === "\r") {
+      if (character === "\r" && input[index + 1] === "\n") index += 1;
+      row.push(cell);
+      rows.push(row);
+      row = [];
+      cell = "";
+    } else cell += character;
+  }
+  if (quoted) throw new Error("The CSV has an unclosed quoted field.");
+  if (cell.length || row.length) {
+    row.push(cell);
+    rows.push(row);
+  }
+  return rows;
+}
+
+function selectCsvRows(rows, selector) {
+  if (!selector.trim()) return rows;
+  const selected = new Set();
+  for (const part of selector.split(",").map((value) => value.trim()).filter(Boolean)) {
+    const range = part.match(/^(\d+)(?:\s*-\s*(\d+))?$/);
+    if (!range) throw new Error("Enter row numbers like 1,3-5, or leave blank to download all rows.");
+    const start = Number(range[1]);
+    const end = Number(range[2] || range[1]);
+    if (start < 1 || end < start || end > rows.length) throw new Error(`Row range ${part} is outside 1–${rows.length}.`);
+    for (let value = start; value <= end; value += 1) selected.add(value);
+  }
+  return [...selected].sort((a, b) => a - b).map((number) => rows[number - 1]);
+}
+
+function getSupportedAudioFormats() {
+  const probe = document.createElement("audio");
+  const candidates = {
+    m4a: ['audio/mp4; codecs="mp4a.40.2"', "audio/x-m4a"],
+    mp3: ["audio/mpeg"],
+    webm: ['audio/webm; codecs="opus"'],
+    opus: ['audio/ogg; codecs="opus"', "audio/opus"],
+    ogg: ['audio/ogg; codecs="vorbis"'],
+    oga: ['audio/ogg; codecs="vorbis"'],
+    flac: ["audio/flac"],
+    wav: ['audio/wav; codecs="1"', "audio/wav"],
+    aac: ["audio/aac"],
+    aiff: ["audio/aiff"],
+  };
+  return Object.entries(candidates)
+    .filter(([, mimeTypes]) => mimeTypes.some((mimeType) => probe.canPlayType(mimeType) !== ""))
+    .map(([extension]) => extension);
 }
 
 function filenameFromResponse(response, sourceUrl, mimeType) {
@@ -167,14 +233,97 @@ export function initializeDownloader() {
   const progress = document.querySelector("#download-progress");
   const progressDetails = document.querySelector("#download-transfer-details");
   const downloadLinkLabel = document.querySelector("#download-link-label");
+  const csvFile = document.querySelector("#download-csv-file");
+  const csvRowsField = document.querySelector("#download-csv-rows");
+  const csvPrepareButton = document.querySelector("#download-csv-prepare");
+  const csvStartButton = document.querySelector("#download-csv-start");
+  const csvStatus = document.querySelector("#download-csv-status");
   const status = document.querySelector("#download-status");
   let downloadSource = "link";
   let selectedBrowseVideo = false;
   let activeDownload = null;
+  let loadedCsvRows = [];
+  let csvBatch = null;
+
+  csvPrepareButton.addEventListener("click", async () => {
+    const file = csvFile.files?.[0];
+    if (!file) {
+      csvStatus.textContent = "Choose a CSV file first.";
+      return;
+    }
+    csvPrepareButton.disabled = true;
+    try {
+      const records = parseCsv(await file.text());
+      if (records.length < 2) throw new Error("The CSV needs a header row and at least one track row.");
+      const headers = records[0].map((header) => header.trim().toLowerCase());
+      const columns = {
+        track: headers.indexOf("track name"),
+        artist: headers.indexOf("artist name"),
+        album: headers.indexOf("album"),
+      };
+      if (Object.values(columns).some((index) => index < 0)) {
+        throw new Error("Required columns: Track Name, Artist Name, and Album.");
+      }
+      loadedCsvRows = records.slice(1).map((record, index) => ({
+        rowNumber: index + 1,
+        track: (record[columns.track] || "").trim(),
+        artist: (record[columns.artist] || "").trim(),
+        album: (record[columns.album] || "").trim(),
+      }));
+      const validCount = loadedCsvRows.filter((row) => row.track && row.artist).length;
+      if (!validCount) throw new Error("No rows have both a Track Name and Artist Name.");
+      csvStartButton.disabled = false;
+      csvStatus.textContent = `Loaded ${validCount} tracks across ${loadedCsvRows.length} data rows. Blank or incomplete rows will be skipped.`;
+    } catch (error) {
+      loadedCsvRows = [];
+      csvStartButton.disabled = true;
+      csvStatus.textContent = error.message || "Could not read this CSV file.";
+    } finally {
+      csvPrepareButton.disabled = false;
+    }
+  });
+
+  function startNextCsvTrack() {
+    if (!csvBatch) return;
+    if (csvBatch.cancelled) {
+      csvStatus.textContent = `CSV queue cancelled after ${csvBatch.index} of ${csvBatch.items.length} tracks.`;
+      csvBatch = null;
+      csvStartButton.disabled = false;
+      return;
+    }
+    if (csvBatch.index >= csvBatch.items.length) {
+      csvStatus.textContent = `CSV downloads finished: ${csvBatch.items.length - csvBatch.failed} succeeded, ${csvBatch.failed} failed.`;
+      csvBatch = null;
+      csvStartButton.disabled = false;
+      return;
+    }
+    const item = csvBatch.items[csvBatch.index];
+    setDownloadSource("link");
+    youtubeUrl.value = `ytsearch: ${item.track} - ${item.artist}${item.album ? ` ${item.album}` : ""}`;
+    selectedBrowseVideo = false;
+    setStatus(status, `CSV row ${item.rowNumber} · track ${csvBatch.index + 1} of ${csvBatch.items.length}`);
+    form.requestSubmit();
+  }
+
+  csvStartButton.addEventListener("click", () => {
+    if (activeDownload || csvBatch) return;
+    try {
+      const selectedRows = selectCsvRows(loadedCsvRows, csvRowsField.value);
+      const items = selectedRows.filter((row) => row.track && row.artist);
+      if (!items.length) throw new Error("The selected rows contain no complete track and artist entries.");
+      csvBatch = { items, index: 0, failed: 0, cancelled: false };
+      csvStartButton.disabled = true;
+      csvStatus.textContent = `Starting ${items.length} downloads in order…`;
+      startNextCsvTrack();
+    } catch (error) {
+      csvStatus.textContent = error.message;
+    }
+  });
 
   cancelButton.addEventListener("click", async () => {
     if (!activeDownload) return;
     activeDownload.cancelled = true;
+    if (csvBatch) csvBatch.cancelled = true;
     cancelButton.disabled = true;
     setStatus(status, "Cancelling download and cleaning up…");
     activeDownload.controller?.abort();
@@ -190,12 +339,11 @@ export function initializeDownloader() {
   function setDownloadSource(source) {
     downloadSource = source;
     const browsing = source === "browse";
-    const usingPi = getDownloadPreferences().backend === "pi";
     youtubeLinkField.hidden = browsing;
-    youtubeBrowsePanel.hidden = !browsing || !usingPi;
-    downloadSourceBrowse.hidden = !usingPi;
-    downloadLinkLabel.textContent = usingPi ? "YouTube link or search" : "Direct media URL";
-    youtubeUrl.placeholder = usingPi ? "Paste a YouTube link or search, e.g. Apollo 11 highlights" : "https://example.com/audio.m4a";
+    youtubeBrowsePanel.hidden = !browsing;
+    downloadSourceBrowse.hidden = false;
+    downloadLinkLabel.textContent = "YouTube link or search phrase";
+    youtubeUrl.placeholder = "Paste a YouTube link or search, e.g. Apollo 11 highlights";
     youtubeUrl.required = !browsing;
     if (!browsing) selectedBrowseVideo = false;
     downloadSourceLink.classList.toggle("is-selected", !browsing);
@@ -283,10 +431,6 @@ export function initializeDownloader() {
   }
 
   async function searchYouTube() {
-    if (getDownloadPreferences().backend !== "pi") {
-      youtubeSearchStatus.textContent = "YouTube downloads need the Raspberry Pi. Select Raspberry Pi in Settings → Downloads.";
-      return;
-    }
     const query = youtubeSearchQuery.value.trim();
     if (!query) {
       youtubeSearchStatus.textContent = "Enter a search term first.";
@@ -333,11 +477,6 @@ export function initializeDownloader() {
   window.addEventListener("puffin:download-pick", (event) => {
     const query = event.detail?.query?.trim();
     if (!query) return;
-    if (getDownloadPreferences().backend !== "pi") {
-      setDownloadSource("link");
-      setStatus(status, "To find this pick on YouTube, choose Raspberry Pi in Settings → Downloads.");
-      return;
-    }
     setDownloadSource("browse");
     youtubeUrl.value = "";
     youtubeSelectedVideo.hidden = true;
@@ -348,12 +487,8 @@ export function initializeDownloader() {
   });
 
   function applyDownloadPreferences() {
-    const usingPi = getDownloadPreferences().backend === "pi";
-    if (!usingPi && downloadSource === "browse") setDownloadSource("link");
-    else setDownloadSource(downloadSource);
-    setStatus(status, usingPi
-      ? "Pi mode is selected. Paste a YouTube link or browse YouTube to download."
-      : "Device mode downloads direct audio/video links when the host allows browser access.");
+    setDownloadSource(downloadSource);
+    setStatus(status, "Downloads run through your Raspberry Pi. Enter a YouTube link or search phrase, or browse YouTube.");
   }
   window.addEventListener("puffin:download-preferences-updated", applyDownloadPreferences);
   applyDownloadPreferences();
@@ -365,12 +500,7 @@ export function initializeDownloader() {
     if (!entered || !hasSelectedBrowseResult) {
       setStatus(status, downloadSource === "browse"
         ? "Search YouTube and choose Audio or Video on a result."
-        : "Enter a direct media link or a YouTube search phrase.");
-      return;
-    }
-    const preferences = getDownloadPreferences();
-    if (preferences.backend !== "pi" && downloadSource === "browse") {
-      setStatus(status, "Select Raspberry Pi in Settings → Downloads to use YouTube.");
+        : "Enter a YouTube link or a search phrase.");
       return;
     }
     submitButton.disabled = true;
@@ -381,56 +511,6 @@ export function initializeDownloader() {
     progress.value = 0;
     progressDetails.hidden = false;
     progressDetails.textContent = "Preparing download…";
-
-    if (preferences.backend === "device") {
-      try {
-        if (!/^https?:\/\//i.test(entered)) {
-          throw new Error("Text searches and YouTube downloads require Raspberry Pi mode. Select it in Settings → Downloads.");
-        }
-        const sourceUrl = new URL(youtubeUrl.value.trim());
-        if (["youtube.com", "www.youtube.com", "youtu.be"].includes(sourceUrl.hostname.toLowerCase())) {
-          throw new Error("YouTube downloads require Raspberry Pi mode. Select it in Settings → Downloads.");
-        }
-        if (sourceUrl.protocol !== "https:" && sourceUrl.protocol !== "http:") throw new Error("Use an HTTP or HTTPS direct media URL.");
-        const capacity = await getMediaStorageCapacity();
-        if (capacity.remainingBytes <= 0) throw new Error("Puffin media storage limit reached. Delete files or raise the limit before downloading.");
-        setStatus(status, "Connecting to the media source…");
-        const response = await fetch(sourceUrl.href, { signal: activeDownload.controller.signal });
-        if (!response.ok) throw new Error(`The media source returned ${response.status}.`);
-        const media = await readDirectMedia(response, sourceUrl.href, capacity, ({ received, total, speed, eta }) => {
-          progress.value = total ? Math.min(100, (received / total) * 100) : 0;
-          if (!total) progress.removeAttribute("value");
-          else progress.setAttribute("value", String(progress.value));
-          const amount = total ? `${formatBytes(received)} of ${formatBytes(total)}` : `${formatBytes(received)} downloaded`;
-          const estimate = eta === null ? "time remaining unavailable" : `${formatTime(eta)} remaining`;
-          progressDetails.textContent = `${amount} · ${formatBytes(speed)}/s · ${estimate}`;
-          setStatus(status, "Downloading on this device…");
-        });
-        if (activeDownload.cancelled) throw new DOMException("Download cancelled.", "AbortError");
-        cancelButton.disabled = true;
-        setStatus(status, "Saving to your Puffin library…");
-        progressDetails.textContent = `${formatBytes(media.blob.size)} · Saving locally…`;
-        await saveMediaFile(media.blob, { name: media.name, type: media.mimeType || media.blob.type });
-        recordPuffinActivity("downloads").catch((error) => console.warn("Could not record completed download:", error));
-        window.dispatchEvent(new Event("puffin:library-updated"));
-        progress.value = 100;
-        progress.setAttribute("value", "100");
-        progressDetails.textContent = `${formatBytes(media.blob.size)} · Complete`;
-        setStatus(status, "Saved to your Puffin library on this device.");
-      } catch (error) {
-        setStatus(status, activeDownload.cancelled || error.name === "AbortError" ? "Download cancelled. Partial data was discarded."
-          : error.message === "Failed to fetch"
-          ? "The source blocked browser access or could not be reached. Try a direct file URL that permits CORS, or configure the Pi in Settings."
-          : error.message || "The download failed.");
-      } finally {
-        submitButton.disabled = false;
-        cancelButton.hidden = true;
-        cancelButton.disabled = false;
-        activeDownload = null;
-        if (progress.value < 100) progress.hidden = true;
-      }
-      return;
-    }
 
     let baseUrl;
     let jobId;
@@ -446,11 +526,17 @@ export function initializeDownloader() {
       setStatus(status, "Connecting to the Pi…");
       await checkPi(baseUrl);
 
-      const downloadTarget = /^https?:\/\//i.test(entered) ? entered : `ytsearch1:${entered}`;
+      const downloadTarget = /^https?:\/\//i.test(entered)
+        ? entered
+        : (entered.startsWith("ytsearch:") || entered.startsWith("ytsearch1:") ? entered : `ytsearch:${entered}`);
       const job = await requestJson(baseUrl, "/api/downloads", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: downloadTarget, kind: downloadKind.value }),
+        body: JSON.stringify({
+          url: downloadTarget,
+          kind: downloadKind.value,
+          supported_audio_formats: downloadKind.value === "audio" ? getSupportedAudioFormats() : [],
+        }),
       });
       jobId = job.id;
       activeDownload.baseUrl = baseUrl;
@@ -549,6 +635,7 @@ export function initializeDownloader() {
         setStatus(status, "Saved locally. The Pi could not confirm cleanup; its temporary copy will expire automatically.");
       }
     } catch (error) {
+      if (csvBatch && !activeDownload.cancelled) csvBatch.failed += 1;
       setStatus(status, activeDownload.cancelled || error.name === "AbortError" ? "Download cancelled. Partial transfer was discarded."
         : error.message || "The download failed.");
       if (jobId && !savedLocally && !activeDownload.cancelled && !(error instanceof MediaCapacityError)) {
@@ -569,12 +656,18 @@ export function initializeDownloader() {
         }
       }
     } finally {
+      const wasCancelled = activeDownload?.cancelled;
       submitButton.disabled = false;
       cancelButton.hidden = true;
       cancelButton.disabled = false;
       activeDownload = null;
       progress.hidden = true;
       progressDetails.hidden = true;
+      if (csvBatch) {
+        if (wasCancelled) csvBatch.cancelled = true;
+        else csvBatch.index += 1;
+        window.setTimeout(startNextCsvTrack, 300);
+      }
     }
   });
 }

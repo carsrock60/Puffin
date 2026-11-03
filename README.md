@@ -4,7 +4,7 @@ Puffin is a music and video app for macOS and iOS. It is designed as a static Pr
 
 ## Download
 
-Users can paste a YouTube link or search YouTube within Puffin. Search results show video thumbnails, titles, channels, and durations; users can preview a result in YouTube or select it for download. Audio downloads use AAC in M4A with a 192 kb/s target. Video downloads use H.264 video and AAC audio in MP4 for browser compatibility.
+Users can paste a YouTube link or search YouTube within Puffin. Search results show video thumbnails, titles, channels, and durations; users can preview a result in YouTube or select it for download. Audio downloads preserve the source audio format when the browser supports it, with AAC in M4A as a compatibility fallback. Video downloads use H.264 video and AAC audio in MP4 for browser compatibility.
 
 Downloads are intended for public-domain videos or users' own videos. Users are trusted to download only content they are authorized to download.
 
@@ -26,7 +26,7 @@ The Edit tab is a music tag editor with the following features:
 
 ## Play
 
-The Play tab plays downloaded audio and video from the local library. Pi downloads use AAC in M4A for audio and H.264 video with AAC audio in MP4. Files imported from the device are kept in their original format; browser playback depends on the codecs the browser supports. Users can create, rename, and delete playlists, add or remove local media, and pin playlists to the top. Playlist data and media files are stored on the device. It includes an equalizer with:
+The Play tab plays downloaded audio and video from the local library. Pi downloads preserve a browser-supported source audio format where possible, with AAC in M4A as a compatibility fallback; videos use H.264 with AAC audio in MP4. Files imported from the device are kept in their original format; browser playback depends on the codecs the browser supports. Users can create, rename, and delete playlists, add or remove local media, and pin playlists to the top. Playlist data and media files are stored on the device. It includes an equalizer with:
 
 - **Multiple bands:** Support five to ten or more bands, covering core hearing ranges from sub-bass (20–60 Hz) to treble and air (8–16+ kHz). A 10-band graphic equalizer offers a balance between control and simplicity.
 - **Preset profiles:** Quick-start modes such as Rock, Pop, Classical, Vocal Boost, and Flat.

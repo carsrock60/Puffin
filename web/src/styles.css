@@ -269,6 +269,13 @@ main {
 .youtube-result-formats { display: flex; gap: 5px; }
 .youtube-result-formats[hidden] { display: none; }
 .youtube-result-formats button { min-height: 34px; padding: 0 9px; font-size: .78rem; }
+.csv-download-section { display: grid; max-width: 620px; gap: 12px; margin-top: 10px; padding: 18px; background: var(--surface); border: 1px solid var(--border); border-radius: 18px; }
+.csv-download-section h2 { margin: 0; font-size: 1rem; }
+.csv-download-section > .muted { margin: 0; font-size: .84rem; line-height: 1.5; }
+.csv-download-controls { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 10px; }
+.csv-download-controls .form-field { min-width: 0; }
+.csv-download-section > .primary-button { justify-self: start; }
+.csv-download-section button:disabled { cursor: not-allowed; opacity: .55; }
 .pi-connection-row { display: flex; align-items: flex-end; gap: 10px; }
 .form-field { display: grid; flex: 1; gap: 7px; min-width: 0; color: var(--muted); font-size: 0.9rem; font-weight: 600; }
 .form-field input, .form-field select {
@@ -665,6 +672,8 @@ body.dark .media-action.danger:hover { background: #48282b; }
   .playlist-dialog form { padding: 22px; }
   .pi-connection-row { align-items: stretch; flex-direction: column; }
   .download-link-row { grid-template-columns: minmax(0, 1fr) 120px; gap: 8px; }
+  .csv-download-controls { grid-template-columns: minmax(0, 1fr); }
+  .csv-download-controls .secondary-button, .csv-download-section > .primary-button { width: 100%; }
   .download-form > .primary-button { width: 100%; }
   .youtube-search-row { align-items: stretch; flex-direction: column; }
   .youtube-search-row .secondary-button { width: 100%; }
