@@ -76,6 +76,7 @@ export function initializePlaylistLibrary({ onPlay, onDeleted }) {
   let mediaRecords = [];
   let playlists = [];
   let activeView = "all";
+  let mediaKindFilter = null;
   let dialogAction = null;
 
   function setStatus(message) {
@@ -237,6 +238,7 @@ export function initializePlaylistLibrary({ onPlay, onDeleted }) {
       if (activeView === playlist.id) selectButton.setAttribute("aria-current", "page");
       selectButton.addEventListener("click", () => {
         activeView = playlist.id;
+        mediaKindFilter = null;
         render();
       });
 
@@ -388,12 +390,15 @@ export function initializePlaylistLibrary({ onPlay, onDeleted }) {
       playPanel.setAttribute("aria-labelledby", "play-title");
       playPanel.removeAttribute("aria-label");
     }
-    const visibleRecords = playlist
+    const selectedRecords = playlist
       ? playlist.mediaIds.map((id) => mediaRecords.find((record) => record.id === id)).filter(Boolean)
       : mediaRecords;
+    const visibleRecords = mediaKindFilter
+      ? selectedRecords.filter((record) => record.kind === mediaKindFilter)
+      : selectedRecords;
 
-    viewEyebrow.textContent = playlist ? "PLAYLIST" : "LIBRARY";
-    viewTitle.textContent = playlist?.name || "All media";
+    viewEyebrow.textContent = playlist ? "PLAYLIST" : mediaKindFilter === "audio" ? "YOUR MUSIC" : "LIBRARY";
+    viewTitle.textContent = playlist?.name || (mediaKindFilter === "audio" ? "Listen" : "All media");
     viewCount.textContent = `${visibleRecords.length} ${visibleRecords.length === 1 ? "item" : "items"}`;
     viewActions.replaceChildren();
 
@@ -409,12 +414,15 @@ export function initializePlaylistLibrary({ onPlay, onDeleted }) {
         browse.textContent = "Browse all media";
         browse.addEventListener("click", () => {
           activeView = "all";
+          mediaKindFilter = null;
           render();
         });
         empty.append(message, browse);
       } else {
         const message = document.createElement("p");
-        message.textContent = "Your library is empty. Import media to get started.";
+        message.textContent = mediaKindFilter === "audio" && mediaRecords.length
+          ? "No music in your library yet. Import audio to listen here."
+          : "Your library is empty. Import media to get started.";
         empty.append(message);
       }
       mediaList.append(empty);
@@ -445,7 +453,20 @@ export function initializePlaylistLibrary({ onPlay, onDeleted }) {
 
   allMediaButton.addEventListener("click", () => {
     activeView = "all";
+    mediaKindFilter = null;
     render();
+  });
+  window.addEventListener("puffin:library-view", async (event) => {
+    const view = event.detail;
+    if (!["listen", "library", "playlists"].includes(view)) return;
+    mediaKindFilter = view === "listen" ? "audio" : null;
+    if (view !== "playlists") activeView = "all";
+    await render();
+    if (view === "playlists") {
+      const sidebar = document.querySelector(".playlist-sidebar");
+      sidebar?.scrollIntoView({ block: "nearest" });
+      sidebar?.focus({ preventScroll: true });
+    }
   });
   createPlaylistButton.addEventListener("click", () => openCreateDialog());
   cancelDialogButton.addEventListener("click", () => dialog.close());

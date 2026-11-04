@@ -24,16 +24,20 @@ The Edit tab is a music tag editor with the following features:
 - **Filename and tag conversion:** Convert between filenames and tags using custom naming masks.
 - **Metadata lookup:** Look up metadata from online sources such as MusicBrainz.
 
+## Watch
+
+The Watch page gathers videos saved in the device's Puffin library. It features a featured video, Continue Watching, Recently Watched, and a searchable video library. Video playlists created in Play can filter the Watch library. Puffin saves watch progress on the device so playback can resume later. The expanded player includes seeking, volume, playback speed, and fullscreen controls; closing it returns playback to the mini-player.
+
 ## Play
 
-The Play tab plays downloaded audio and video from the local library. Pi downloads preserve a browser-supported source audio format where possible, with AAC in M4A as a compatibility fallback; videos use H.264 with AAC audio in MP4. Files imported from the device are kept in their original format; browser playback depends on the codecs the browser supports. Users can create, rename, and delete playlists, add or remove local media, and pin playlists to the top. Playlist data and media files are stored on the device. It includes an equalizer with:
+The Play tab provides the local library and playlists, with the compact player focused on music. Pi downloads preserve a browser-supported source audio format where possible, with AAC in M4A as a compatibility fallback. Files imported from the device are kept in their original format; browser playback depends on the codecs the browser supports. Users can create, rename, and delete playlists, add or remove local media, and pin playlists to the top. Playlist data and media files are stored on the device. It includes a 10-band equalizer with:
 
 - **Multiple bands:** Support five to ten or more bands, covering core hearing ranges from sub-bass (20–60 Hz) to treble and air (8–16+ kHz). A 10-band graphic equalizer offers a balance between control and simplicity.
 - **Preset profiles:** Quick-start modes such as Hip Hop, Rock, Pop, Classical, Vocal Boost, and Flat.
 - **Preamp / gain control:** Lower overall volume when boosting frequencies to help prevent digital clipping and distortion.
 - **Custom presets:** Save, name, and recall frequency curves for different headphones or speakers.
 
-The player also includes an audio visualizer with dancing bars, play and pause, shuffle, repeat, queue controls (add to queue and edit queue), and a smooth scrub bar.
+The player also includes play and pause, playback speed, and a smooth scrub bar.
 
 ## Stats
 
@@ -41,9 +45,6 @@ The Stats tab displays separate tables ranking the most frequently played artist
 
 ## Interface
 
-The home page should have a navigation menu for Download, Edit, Play, and Stats; a dark-mode button; and a settings gear icon. The main area should display:
+The app has an expandable desktop sidebar and a touch-friendly mobile navigation drawer, grouped into Discover, Your Library, and Tools. Listen filters the local library to audio; Library shows all media; Playlists opens the existing playlist browser. Home shows recently played music and optional music picks.
 
-> **Puffin: A Music Player**  
-> Click an option to get started
-
-The PWA should provide a more compact mobile layout while keeping all features available.
+The video theater overlays its title and playback controls over the full video area. Pointer, touch, or keyboard activity reveals the controls; they fade after three seconds without activity.

@@ -6,6 +6,7 @@ const TRACKS_STORE = "tracks";
 const FILES_STORE = "files";
 const PLAYLISTS_STORE = "playlists";
 const HISTORY_STORE = "playHistory";
+const VIDEO_PROGRESS_KEY = "video-progress";
 const STATS_STORE = "analytics";
 const MEDIA_STORAGE_LIMIT_KEY = "puffin.mediaStorageLimitBytes";
 export const DEFAULT_MEDIA_STORAGE_LIMIT_BYTES = 10 * 1024 ** 3;
@@ -345,6 +346,41 @@ export async function listRecentlyPlayed() {
     .map((play) => mediaById.get(play.mediaId))
     .filter(Boolean)
     .slice(0, 30);
+}
+
+export async function getVideoWatchHistory() {
+  const database = await openDatabase();
+  const request = database.transaction(HISTORY_STORE, "readonly")
+    .objectStore(HISTORY_STORE).get(VIDEO_PROGRESS_KEY);
+  return new Promise((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result?.items || []);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+export async function recordVideoWatchProgress(mediaId, currentTime, duration) {
+  if (!mediaId || !Number.isFinite(currentTime) || currentTime < 0) return;
+  const database = await openDatabase();
+  const transaction = database.transaction(HISTORY_STORE, "readwrite");
+  const completion = transactionComplete(transaction);
+  const store = transaction.objectStore(HISTORY_STORE);
+  const request = store.get(VIDEO_PROGRESS_KEY);
+  request.onsuccess = () => {
+    const items = request.result?.items || [];
+    const previous = items.find((item) => item.mediaId === mediaId);
+    const safeDuration = Number.isFinite(duration) && duration > 0 ? duration : (previous?.duration || 0);
+    const progress = {
+      mediaId,
+      currentTime,
+      duration: safeDuration,
+      watchedAt: Date.now(),
+      completed: safeDuration > 0 && currentTime >= safeDuration * 0.9,
+    };
+    const nextItems = [progress, ...items.filter((item) => item.mediaId !== mediaId)].slice(0, 100);
+    store.put({ id: VIDEO_PROGRESS_KEY, items: nextItems });
+  };
+  await completion;
+  window.dispatchEvent(new CustomEvent("puffin:video-progress-updated", { detail: { mediaId } }));
 }
 
 export async function listPlaylists() {
