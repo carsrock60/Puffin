@@ -5,6 +5,7 @@ import { initializeSettings } from "./settings.js";
 import { initializeEdit } from "./edit.js";
 import { initializeHome } from "./home.js";
 import { initializeStats } from "./stats.js";
+import { initializeEqualizer } from "./equalizer.js";
 
 const tabButtons = document.querySelectorAll("[data-tab]");
 const panels = document.querySelectorAll("[data-panel]");
@@ -48,7 +49,6 @@ const playerToggle = document.querySelector("#player-toggle");
 const playerSeek = document.querySelector("#player-seek");
 const playerCurrentTime = document.querySelector("#player-current-time");
 const playerDuration = document.querySelector("#player-duration");
-const playerVolume = document.querySelector("#player-volume");
 const playerSpeed = document.querySelector("#player-speed");
 const playerClose = document.querySelector("#player-close");
 const videoTheater = document.querySelector("#video-theater");
@@ -170,7 +170,6 @@ async function startPlayback(record) {
     otherPlayer.hidden = true;
     player.hidden = false;
     player.src = activeObjectUrl;
-    player.volume = Number(playerVolume.value);
     player.playbackRate = 1;
     player.defaultPlaybackRate = 1;
     playerSpeed.value = "1";
@@ -303,12 +302,6 @@ playerSeek.addEventListener("input", () => {
   playerCurrentTime.textContent = formatTime(Number(playerSeek.value));
 });
 
-playerVolume.addEventListener("input", () => {
-  const volume = Number(playerVolume.value);
-  audioPlayer.volume = volume;
-  videoPlayer.volume = volume;
-});
-
 playerSpeed.addEventListener("change", () => {
   const speed = Number(playerSpeed.value);
   audioPlayer.playbackRate = speed;
@@ -409,6 +402,7 @@ initializeSettings();
 initializeEdit();
 initializeHome({ onPlay: startPlayback });
 initializeStats();
+initializeEqualizer({ audioPlayer, videoPlayer });
 
 if ("serviceWorker" in navigator && window.isSecureContext) {
   window.addEventListener("load", () => {

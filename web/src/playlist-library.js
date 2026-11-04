@@ -49,6 +49,8 @@ function iconButton(label, icon, className, action) {
 export function initializePlaylistLibrary({ onPlay, onDeleted }) {
   const importButton = document.querySelector("#import-media");
   const filePicker = document.querySelector("#media-files");
+  const playPanel = document.querySelector("#play-panel");
+  const playTitle = document.querySelector("#play-title");
   const libraryStatus = document.querySelector("#library-status");
   const libraryStorage = document.querySelector("#library-storage");
   const mediaList = document.querySelector("#media-list");
@@ -371,8 +373,21 @@ export function initializePlaylistLibrary({ onPlay, onDeleted }) {
 
   function renderMediaList() {
     mediaList.replaceChildren();
-    const playlist = activeView === "all" ? null : playlists.find((item) => item.id === activeView);
-    if (activeView !== "all" && !playlist) activeView = "all";
+    let playlist = activeView === "all" ? null : playlists.find((item) => item.id === activeView);
+    if (activeView !== "all" && !playlist) {
+      activeView = "all";
+      playlist = null;
+    }
+    const viewingPlaylist = Boolean(playlist);
+    playTitle.hidden = viewingPlaylist;
+    importButton.hidden = viewingPlaylist;
+    if (viewingPlaylist) {
+      playPanel.removeAttribute("aria-labelledby");
+      playPanel.setAttribute("aria-label", "Play");
+    } else {
+      playPanel.setAttribute("aria-labelledby", "play-title");
+      playPanel.removeAttribute("aria-label");
+    }
     const visibleRecords = playlist
       ? playlist.mediaIds.map((id) => mediaRecords.find((record) => record.id === id)).filter(Boolean)
       : mediaRecords;
