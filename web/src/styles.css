@@ -209,6 +209,10 @@ main {
 .watch-featured-metadata { min-height: 1.5em; margin: 0 0 22px; color: #ffffffc4; }
 .watch-featured-play { min-height: 48px; padding: 0 22px; border-radius: 999px; }
 .watch-featured-empty { display: grid; min-height: 290px; grid-template-columns: 1fr minmax(180px, .72fr); align-items: center; gap: 24px; padding: clamp(24px, 5vw, 56px); overflow: hidden; border: 1px solid var(--border); border-radius: 28px; background: radial-gradient(ellipse at 90% 15%, #7199a531, transparent 42%), var(--surface); }
+.listen-art-button { aspect-ratio: 16 / 9; }
+.listen-artwork { width: 100%; height: 100%; object-fit: cover; background: var(--accent-soft); }
+.listen-featured-card .watch-featured-art { background-size: cover; background-position: center; }
+.listen-featured-card .watch-featured-art img { object-fit: cover; }
 .watch-featured-empty h2 { margin: 0 0 8px; font-size: clamp(1.7rem, 3vw, 2.4rem); letter-spacing: -.05em; }
 .watch-featured-empty p:not(.watch-eyebrow) { margin: 0 0 20px; color: var(--muted); }
 .watch-featured-art-empty { position: relative; display: grid; min-height: 180px; place-items: center; border-radius: 22px; }
@@ -620,6 +624,12 @@ body.has-player main { padding-bottom: 132px; }
 .empty-library { padding: 22px 18px; color: var(--muted); background: var(--page); border-radius: 16px; text-align: center; }
 
 .playlist-library { display: grid; grid-template-columns: minmax(190px, 240px) minmax(0, 1fr); gap: 24px; margin-top: 30px; }
+.playlist-library:not(.is-playlist-view) { grid-template-columns: minmax(0, 1fr); }
+.playlist-browser[hidden] { display: none; }
+.sidebar-pinned-playlists { display: grid; gap: 3px; margin: 4px 0 0; padding: 0; list-style: none; }
+.pinned-playlist-link { min-height: 42px; font-size: .86rem; }
+.app.is-sidebar-collapsed .pinned-playlist-link .nav-label { display: none; }
+.app.is-sidebar-collapsed .pinned-playlist-link { justify-content: center; padding: 0; }
 .playlist-sidebar { align-self: start; min-width: 0; padding: 14px; background: var(--page); border: 1px solid var(--border); border-radius: 20px; }
 .playlist-sidebar-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 2px 2px 12px 8px; }
 .playlist-sidebar-heading h2 { margin: 0; font-size: 0.95rem; }

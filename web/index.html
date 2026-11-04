@@ -30,13 +30,14 @@
             <button class="nav-button" type="button" data-tab="home" aria-current="page" aria-label="Home" title="Home">
               <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m3 10 9-7 9 7M5.5 9v11h13V9M9.5 20v-6h5v6"/></svg></span><span class="nav-label">Home</span>
             </button>
-            <button class="nav-button" type="button" data-tab="play" data-library-view="listen" aria-label="Listen" title="Listen">
+            <button class="nav-button" type="button" data-tab="listen" aria-label="Listen" title="Listen">
               <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 18V5l12-2v13M9 18a3 3 0 1 1-3-3c1.7 0 3 1.3 3 3Zm12-2a3 3 0 1 1-3-3c1.7 0 3 1.3 3 3Z"/></svg></span><span class="nav-label">Listen</span>
             </button>
             <button class="nav-button" type="button" data-tab="watch" aria-label="Watch" title="Watch">
               <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 7.5 21 5v12L3 19.5v-12ZM3 12l18-2.5M8 6.8l2.5 5M14 6l2.5 5"/></svg></span><span class="nav-label">Watch</span>
             </button>
           </section>
+
           <section class="nav-group" aria-labelledby="nav-library-heading">
             <h2 class="nav-group-heading" id="nav-library-heading">Your Library</h2>
             <button class="nav-button" type="button" data-tab="play" data-library-view="library" aria-label="Library" title="Library">
@@ -45,6 +46,7 @@
             <button class="nav-button" type="button" data-tab="play" data-library-view="playlists" aria-label="Playlists" title="Playlists">
               <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 5h12M4 10h12M4 15h7M18 4v13a2 2 0 1 1-2-2h2M4 20h7"/></svg></span><span class="nav-label">Playlists</span>
             </button>
+            <ul id="sidebar-pinned-playlists" class="sidebar-pinned-playlists" aria-label="Pinned playlists"></ul>
           </section>
           <section class="nav-group nav-group-tools" aria-label="Tools">
             <button class="nav-button" type="button" data-tab="download" aria-label="Download" title="Download">
@@ -138,6 +140,13 @@
             </section>
           </section>
 
+          <section class="panel listen-panel" id="listen-panel" data-panel="listen" aria-labelledby="listen-title" hidden>
+            <header class="watch-page-heading"><div><p class="watch-eyebrow">PUFFIN MUSIC</p><h1 id="listen-title" tabindex="-1">Listen</h1><p class="muted">Your music, ready when you are.</p></div></header>
+            <section class="watch-featured-section" aria-labelledby="listen-featured-title"><h2 id="listen-featured-title" class="visually-hidden">Featured song</h2><div id="listen-featured"></div></section>
+            <section class="watch-library-section" aria-labelledby="listen-recent-title"><div class="watch-section-heading"><h2 id="listen-recent-title">Recently played</h2></div><div id="listen-recent" class="watch-card-grid watch-card-row" role="list"></div><p id="listen-recent-empty" class="watch-empty" hidden>No songs played yet.</p></section>
+            <section class="watch-library-section"><div class="watch-section-heading"><h2>Your music library</h2></div><div class="watch-library-controls"><label class="watch-search"><span class="visually-hidden">Search songs</span><input id="listen-search" type="search" placeholder="Search songs" /></label><label class="watch-select-field"><span>Playlist</span><select id="listen-playlist"><option value="all">All playlists</option></select></label></div><p id="listen-empty" class="watch-empty" hidden>No songs match.</p><div id="listen-library" class="watch-card-grid" role="list"></div></section>
+          </section>
+
           <section class="panel" id="download-panel" data-panel="download" aria-labelledby="download-title" hidden>
             <h1 id="download-title">Download</h1>
             <form id="download-form" class="download-form">
@@ -225,27 +234,17 @@
           </section>
 
           <section class="panel" id="play-panel" data-panel="play" aria-labelledby="play-title" hidden>
-            <h1 id="play-title">Play</h1>
-
-            <div class="library-toolbar">
-              <button class="primary-button" id="import-media" type="button">Import media</button>
-              <input id="media-files" type="file" accept="audio/*,video/*" multiple hidden />
-              <p id="library-status" class="muted" role="status" aria-live="polite">Loading your library…</p>
-            </div>
-            <div class="playlist-library">
-              <aside class="playlist-sidebar" aria-label="Playlists" tabindex="-1">
+            <p id="library-status" class="muted visually-hidden" role="status" aria-live="polite">Loading your library…</p>
+            <div class="playlist-library" id="playlist-library-layout">
+              <aside class="playlist-sidebar" id="playlist-browser" aria-label="Playlists" tabindex="-1" hidden>
                 <div class="playlist-sidebar-heading">
                   <h2>Playlists</h2>
                   <button class="round-button" id="create-playlist" type="button" aria-label="Create playlist" title="Create playlist">+</button>
                 </div>
-                <button class="playlist-nav-item is-selected" id="all-media-view" type="button" aria-current="page">
-                  <span class="playlist-nav-icon" aria-hidden="true">♫</span>
-                  <span>All media</span>
-                </button>
                 <ul id="playlist-list" class="playlist-list" aria-label="Your playlists"></ul>
               </aside>
 
-              <section class="playlist-content" aria-labelledby="playlist-view-title">
+              <section class="playlist-content" id="library-content" aria-labelledby="playlist-view-title">
                 <div class="playlist-view-heading">
                   <div>
                     <p class="playlist-eyebrow" id="playlist-eyebrow">LIBRARY</p>
@@ -455,6 +454,10 @@
           <button class="primary-button" id="playlist-dialog-submit" type="submit">Create</button>
         </div>
       </form>
+    </dialog>
+
+    <dialog id="media-details-dialog" class="playlist-dialog" aria-labelledby="media-details-title">
+      <form method="dialog"><h2 id="media-details-title">More</h2><p id="media-details-content" class="muted"></p><div class="playlist-dialog-actions"><button class="primary-button" type="submit">Done</button></div></form>
     </dialog>
 
     <dialog id="artwork-preview" class="artwork-preview-dialog" aria-label="Artwork preview">

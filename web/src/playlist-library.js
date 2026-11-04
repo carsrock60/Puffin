@@ -3,13 +3,12 @@ import {
   createPlaylist,
   deleteMediaFile,
   deletePlaylist,
-  getMediaKind,
   getMediaBlob,
+  getMediaStorageLimit,
   listMediaFiles,
   listPlaylists,
   removeMediaFromPlaylist,
   renamePlaylist,
-  saveMediaFile,
   setPlaylistPinned,
 } from "./library.js";
 
@@ -47,15 +46,14 @@ function iconButton(label, icon, className, action) {
 }
 
 export function initializePlaylistLibrary({ onPlay, onDeleted }) {
-  const importButton = document.querySelector("#import-media");
-  const filePicker = document.querySelector("#media-files");
   const playPanel = document.querySelector("#play-panel");
-  const playTitle = document.querySelector("#play-title");
   const libraryStatus = document.querySelector("#library-status");
   const libraryStorage = document.querySelector("#library-storage");
   const mediaList = document.querySelector("#media-list");
   const playlistList = document.querySelector("#playlist-list");
-  const allMediaButton = document.querySelector("#all-media-view");
+  const playlistBrowser = document.querySelector("#playlist-browser");
+  const libraryLayout = document.querySelector("#playlist-library-layout");
+  const pinnedNav = document.querySelector("#sidebar-pinned-playlists");
   const createPlaylistButton = document.querySelector("#create-playlist");
   const viewEyebrow = document.querySelector("#playlist-eyebrow");
   const viewTitle = document.querySelector("#playlist-view-title");
@@ -77,6 +75,7 @@ export function initializePlaylistLibrary({ onPlay, onDeleted }) {
   let playlists = [];
   let activeView = "all";
   let mediaKindFilter = null;
+  let currentLibraryView = "library";
   let dialogAction = null;
 
   function setStatus(message) {
@@ -223,10 +222,6 @@ export function initializePlaylistLibrary({ onPlay, onDeleted }) {
 
   function renderPlaylistSidebar() {
     playlistList.replaceChildren();
-    allMediaButton.classList.toggle("is-selected", activeView === "all");
-    if (activeView === "all") allMediaButton.setAttribute("aria-current", "page");
-    else allMediaButton.removeAttribute("aria-current");
-
     playlists.forEach((playlist) => {
       const item = document.createElement("li");
       item.className = "playlist-item";
@@ -237,6 +232,9 @@ export function initializePlaylistLibrary({ onPlay, onDeleted }) {
       selectButton.className = "playlist-item-button";
       if (activeView === playlist.id) selectButton.setAttribute("aria-current", "page");
       selectButton.addEventListener("click", () => {
+        document.querySelector('[data-library-view="playlists"]').click();
+      });
+      selectButton.addEventListener("dblclick", () => {
         activeView = playlist.id;
         mediaKindFilter = null;
         render();
@@ -320,15 +318,14 @@ export function initializePlaylistLibrary({ onPlay, onDeleted }) {
     name.textContent = record.title || record.name.replace(/\.[^.]+$/, "");
     const details = document.createElement("span");
     details.className = "media-details";
-    const typeAndSize = `${record.kind === "video" ? "Video" : "Audio"} · ${formatBytes(record.size)}`;
+    const typeLabel = record.kind === "video" ? "Video" : "Audio";
     const formatDuration = (seconds) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
     const updateDetails = (duration = record.duration) => {
       details.textContent = [
         record.artist,
         record.album,
         Number.isFinite(duration) && duration > 0 ? formatDuration(duration) : "",
-        typeAndSize,
-        `Added ${new Date(record.importedAt).toLocaleDateString()}`,
+        typeLabel,
       ].filter(Boolean).join(" · ");
     };
     updateDetails();
@@ -356,6 +353,19 @@ export function initializePlaylistLibrary({ onPlay, onDeleted }) {
     summary.textContent = "•••";
     const menu = document.createElement("div");
     menu.className = "media-overflow-menu";
+    const more = document.createElement("button");
+    more.type = "button";
+    more.textContent = "More";
+    more.addEventListener("click", () => {
+      const popup = document.querySelector("#media-details-dialog");
+      const limit = getMediaStorageLimit();
+      const percent = limit > 0 ? (record.size / limit * 100).toFixed(2) : "0.00";
+      document.querySelector("#media-details-title").textContent = record.title || record.name;
+      document.querySelector("#media-details-content").textContent = `Added ${new Date(record.importedAt).toLocaleDateString()} · ${formatBytes(record.size)} · ${percent}% of storage limit`;
+      overflow.open = false;
+      popup.showModal();
+    });
+    menu.append(more);
     if (playlist) {
       const remove = document.createElement("button"); remove.type = "button"; remove.textContent = "Remove from playlist";
       remove.addEventListener("click", async () => {
@@ -381,15 +391,10 @@ export function initializePlaylistLibrary({ onPlay, onDeleted }) {
       playlist = null;
     }
     const viewingPlaylist = Boolean(playlist);
-    playTitle.hidden = viewingPlaylist;
-    importButton.hidden = viewingPlaylist;
-    if (viewingPlaylist) {
-      playPanel.removeAttribute("aria-labelledby");
-      playPanel.setAttribute("aria-label", "Play");
-    } else {
-      playPanel.setAttribute("aria-labelledby", "play-title");
-      playPanel.removeAttribute("aria-label");
-    }
+    playlistBrowser.hidden = currentLibraryView !== "playlists";
+    libraryLayout.classList.toggle("is-playlist-view", currentLibraryView === "playlists");
+    playPanel.setAttribute("aria-label", viewingPlaylist ? "Playlist" : "Library");
+    playPanel.removeAttribute("aria-labelledby");
     const selectedRecords = playlist
       ? playlist.mediaIds.map((id) => mediaRecords.find((record) => record.id === id)).filter(Boolean)
       : mediaRecords;
@@ -397,8 +402,8 @@ export function initializePlaylistLibrary({ onPlay, onDeleted }) {
       ? selectedRecords.filter((record) => record.kind === mediaKindFilter)
       : selectedRecords;
 
-    viewEyebrow.textContent = playlist ? "PLAYLIST" : mediaKindFilter === "audio" ? "YOUR MUSIC" : "LIBRARY";
-    viewTitle.textContent = playlist?.name || (mediaKindFilter === "audio" ? "Listen" : "All media");
+    viewEyebrow.textContent = playlist ? "PLAYLISTS" : mediaKindFilter === "audio" ? "YOUR MUSIC" : "LIBRARY";
+    viewTitle.textContent = playlist?.name || (currentLibraryView === "playlists" ? "Playlists" : mediaKindFilter === "audio" ? "Listen" : "All media");
     viewCount.textContent = `${visibleRecords.length} ${visibleRecords.length === 1 ? "item" : "items"}`;
     viewActions.replaceChildren();
 
@@ -420,9 +425,7 @@ export function initializePlaylistLibrary({ onPlay, onDeleted }) {
         empty.append(message, browse);
       } else {
         const message = document.createElement("p");
-        message.textContent = mediaKindFilter === "audio" && mediaRecords.length
-          ? "No music in your library yet. Import audio to listen here."
-          : "Your library is empty. Import media to get started.";
+        message.textContent = mediaKindFilter === "audio" ? "No music is available in your library yet." : "Your library is empty.";
         empty.append(message);
       }
       mediaList.append(empty);
@@ -443,6 +446,7 @@ export function initializePlaylistLibrary({ onPlay, onDeleted }) {
         activeView = "all";
       }
       renderPlaylistSidebar();
+      renderPinnedNavigation();
       renderMediaList();
       await updateStorageSummary();
     } catch (error) {
@@ -451,16 +455,34 @@ export function initializePlaylistLibrary({ onPlay, onDeleted }) {
     }
   }
 
-  allMediaButton.addEventListener("click", () => {
-    activeView = "all";
-    mediaKindFilter = null;
-    render();
-  });
+  function renderPinnedNavigation() {
+    pinnedNav.replaceChildren();
+    playlists.filter((playlist) => playlist.pinned).forEach((playlist) => {
+      const item = document.createElement("li");
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "nav-button pinned-playlist-link";
+      button.setAttribute("aria-label", playlist.name);
+      button.title = playlist.name;
+      const icon = document.createElement("span"); icon.className = "nav-icon"; icon.textContent = "♫";
+      const label = document.createElement("span"); label.className = "nav-label"; label.textContent = playlist.name;
+      button.append(icon, label);
+      button.addEventListener("click", () => {
+        activeView = playlist.id;
+        mediaKindFilter = null;
+        document.querySelector('[data-library-view="playlists"]').click();
+      });
+      item.append(button); pinnedNav.append(item);
+    });
+  }
   window.addEventListener("puffin:library-view", async (event) => {
     const view = event.detail;
     if (!["listen", "library", "playlists"].includes(view)) return;
+    currentLibraryView = view;
     mediaKindFilter = view === "listen" ? "audio" : null;
     if (view !== "playlists") activeView = "all";
+    playPanel.setAttribute("aria-label", view === "playlists" ? "Playlists" : view === "listen" ? "Listen" : "Library");
+    playPanel.removeAttribute("aria-labelledby");
     await render();
     if (view === "playlists") {
       const sidebar = document.querySelector(".playlist-sidebar");
@@ -488,60 +510,11 @@ export function initializePlaylistLibrary({ onPlay, onDeleted }) {
     }
   });
 
-  importButton.addEventListener("click", () => filePicker.click());
-  filePicker.addEventListener("change", async () => {
-    const files = Array.from(filePicker.files || []);
-    filePicker.value = "";
-    if (files.length === 0) return;
-
-    importButton.disabled = true;
-    let imported = 0;
-    let skipped = 0;
-    let failure;
-    try {
-      try {
-        if (navigator.storage?.persist) await navigator.storage.persist();
-      } catch {
-        // Importing can proceed if persistent storage is unavailable.
-      }
-      for (const file of files) {
-        if (!getMediaKind(file.name, file.type)) {
-          skipped += 1;
-          continue;
-        }
-        setStatus(`Importing ${file.name}…`);
-        try {
-          await saveMediaFile(file);
-          imported += 1;
-        } catch (error) {
-          failure = error;
-          break;
-        }
-      }
-    } catch (error) {
-      failure = error;
-    } finally {
-      importButton.disabled = false;
-    }
-
-    await render();
-    if (failure) {
-      const reason = failure.name === "QuotaExceededError"
-        ? "There is not enough browser storage. Delete some files and try again."
-        : failure.message;
-      setStatus(`Import stopped after ${imported} file(s): ${reason}`);
-    } else if (imported || skipped) {
-      const skippedMessage = skipped ? ` ${skipped} unsupported file(s) skipped.` : "";
-      setStatus(`Imported ${imported} file(s).${skippedMessage}`);
-    } else {
-      setStatus(`${mediaRecords.length} ${mediaRecords.length === 1 ? "file" : "files"} in your library.`);
-    }
-  });
-
   window.addEventListener("puffin:library-updated", () => render());
   window.addEventListener("puffin:metadata-updated", () => render());
   render().then(() => {
-    if (mediaRecords.length === 0) setStatus("Your library is empty. Import media to get started.");
+    renderPinnedNavigation();
+    if (mediaRecords.length === 0) setStatus("Your library is empty.");
     else setStatus(`${mediaRecords.length} ${mediaRecords.length === 1 ? "file" : "files"} in your library.`);
   });
 }

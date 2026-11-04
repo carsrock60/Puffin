@@ -7,6 +7,7 @@ import { initializeHome } from "./home.js";
 import { initializeStats } from "./stats.js";
 import { initializeEqualizer } from "./equalizer.js";
 import { initializeWatch } from "./watch.js";
+import { initializeListen } from "./listen.js";
 
 const tabButtons = document.querySelectorAll("[data-tab]");
 const panels = document.querySelectorAll("[data-panel]");
@@ -818,6 +819,7 @@ initializeHome({ onPlay: (record) => startPlayback(record, 0, record.kind === "v
 initializeStats();
 initializeEqualizer({ audioPlayer, videoPlayer });
 initializeWatch({ onPlay: (record, resumeTime) => startPlayback(record, resumeTime, true) });
+initializeListen({ onPlay: (record) => startPlayback(record) });
 
 if ("serviceWorker" in navigator && window.isSecureContext) {
   window.addEventListener("load", () => {
