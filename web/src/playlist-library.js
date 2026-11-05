@@ -232,12 +232,7 @@ export function initializePlaylistLibrary({ onPlay, onDeleted }) {
       selectButton.className = "playlist-item-button";
       if (activeView === playlist.id) selectButton.setAttribute("aria-current", "page");
       selectButton.addEventListener("click", () => {
-        document.querySelector('[data-library-view="playlists"]').click();
-      });
-      selectButton.addEventListener("dblclick", () => {
-        activeView = playlist.id;
-        mediaKindFilter = null;
-        render();
+        window.dispatchEvent(new CustomEvent("puffin:library-view", { detail: { view: "playlists", playlistId: playlist.id } }));
       });
 
       const name = document.createElement("span");
@@ -397,7 +392,7 @@ export function initializePlaylistLibrary({ onPlay, onDeleted }) {
     playPanel.removeAttribute("aria-labelledby");
     const selectedRecords = playlist
       ? playlist.mediaIds.map((id) => mediaRecords.find((record) => record.id === id)).filter(Boolean)
-      : mediaRecords;
+      : currentLibraryView === "playlists" ? [] : mediaRecords;
     const visibleRecords = mediaKindFilter
       ? selectedRecords.filter((record) => record.kind === mediaKindFilter)
       : selectedRecords;
@@ -410,7 +405,9 @@ export function initializePlaylistLibrary({ onPlay, onDeleted }) {
     if (visibleRecords.length === 0) {
       const empty = document.createElement("li");
       empty.className = "playlist-empty-state";
-      if (playlist) {
+      if (currentLibraryView === "playlists" && !playlist) {
+        return;
+      } else if (playlist) {
         const message = document.createElement("p");
         message.textContent = "This playlist is empty.";
         const browse = document.createElement("button");
@@ -468,19 +465,18 @@ export function initializePlaylistLibrary({ onPlay, onDeleted }) {
       const label = document.createElement("span"); label.className = "nav-label"; label.textContent = playlist.name;
       button.append(icon, label);
       button.addEventListener("click", () => {
-        activeView = playlist.id;
-        mediaKindFilter = null;
-        document.querySelector('[data-library-view="playlists"]').click();
+        document.querySelector('[data-tab="play"][data-library-view="playlists"]').click();
+        window.dispatchEvent(new CustomEvent("puffin:library-view", { detail: { view: "playlists", playlistId: playlist.id } }));
       });
       item.append(button); pinnedNav.append(item);
     });
   }
   window.addEventListener("puffin:library-view", async (event) => {
-    const view = event.detail;
+    const view = typeof event.detail === "string" ? event.detail : event.detail?.view;
     if (!["listen", "library", "playlists"].includes(view)) return;
     currentLibraryView = view;
     mediaKindFilter = view === "listen" ? "audio" : null;
-    if (view !== "playlists") activeView = "all";
+    activeView = view === "playlists" ? (typeof event.detail === "object" && event.detail.playlistId ? event.detail.playlistId : "all") : "all";
     playPanel.setAttribute("aria-label", view === "playlists" ? "Playlists" : view === "listen" ? "Listen" : "Library");
     playPanel.removeAttribute("aria-labelledby");
     await render();

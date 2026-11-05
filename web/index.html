@@ -71,6 +71,7 @@
       <div class="workspace">
         <header class="topbar">
           <button class="icon-button mobile-menu-button" id="mobile-menu-open" type="button" aria-label="Open navigation" aria-controls="app-sidebar" aria-expanded="false" title="Open navigation">☰</button>
+          <span id="connection-status" class="connection-status is-online" role="status" aria-label="Online" title="Online"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 8.8a15.5 15.5 0 0 1 20 0M5.5 12.3a10 10 0 0 1 13 0M9 15.8a4.7 4.7 0 0 1 6 0M12 19.5h.01"/></svg></span>
           <button class="icon-button" id="theme-toggle" type="button" aria-label="Toggle dark mode" aria-pressed="false" title="Toggle dark mode">☾</button>
         </header>
 
@@ -344,6 +345,10 @@
 
       <div class="player-actions">
         <button id="player-expand-video" class="player-expand-video" type="button" aria-label="Expand video player" title="Expand video" hidden>⤢</button>
+        <button id="player-shuffle" class="player-mode-action" type="button" aria-label="Shuffle" aria-pressed="false" title="Shuffle">⤨</button>
+        <button id="player-repeat" class="player-mode-action" type="button" aria-label="Repeat all" aria-pressed="true" title="Repeat all">↻</button>
+        <button id="player-visualizer" class="player-mode-action" type="button" aria-label="Open visualizer" title="Visualizer">▥</button>
+        <button id="player-queue" class="player-mode-action" type="button" aria-label="Open queue" title="Queue">☷</button>
         <button id="player-equalizer-open" class="player-equalizer-button" type="button" aria-label="Open equalizer" title="Equalizer">EQ</button>
         <select id="player-speed" class="player-speed" aria-label="Playback speed" title="Playback speed">
           <option value="0.25">0.25×</option>
@@ -361,6 +366,35 @@
       <audio id="audio-player" preload="metadata" hidden></audio>
       </section>
     </div>
+
+    <section id="player-fullscreen" class="player-fullscreen" aria-label="Full screen music player" aria-hidden="true" hidden>
+      <header class="full-player-heading">
+        <button id="full-player-back" class="full-player-back" type="button" aria-label="Close full screen player">⌄</button>
+        <img id="full-player-artwork" alt="" />
+        <div><h1 id="full-player-title">Nothing playing</h1><p id="full-player-artist">Puffin Library</p></div>
+      </header>
+      <div class="full-player-content">
+        <section id="full-player-lyrics" class="full-player-pane full-player-lyrics" aria-label="Lyrics">
+          <p id="full-player-lyrics-empty" class="full-player-placeholder">Synchronized lyrics will appear here. Download them in Edit to keep them available offline.</p>
+          <ol id="full-player-lyrics-lines" class="full-player-lyrics-lines" aria-label="Synchronized lyrics" aria-live="off" hidden></ol>
+          <p id="full-player-lyrics-credit" class="full-player-lyrics-credit" hidden>Lyrics provided by <a href="https://lrclib.net/" target="_blank" rel="noreferrer">LRCLIB</a></p>
+        </section>
+        <section id="full-player-queue" class="full-player-pane" aria-label="Queue" hidden><h2>Queue</h2><ol id="full-player-queue-list" class="full-player-queue-list"></ol></section>
+        <section id="full-player-equalizer" class="full-player-pane full-player-equalizer" aria-label="Equalizer" hidden></section>
+      </div>
+      <div class="full-player-bottom">
+        <div class="full-player-controls">
+          <button id="full-player-shuffle" type="button" aria-pressed="false">Shuffle</button>
+          <button id="full-player-repeat" type="button" aria-pressed="true">Repeat all</button>
+          <button id="full-player-visualizer-button" type="button" aria-pressed="false">Visualizer</button>
+          <button id="full-player-queue-button" data-pane="queue" type="button" aria-pressed="false">Queue</button>
+          <button id="full-player-eq-button" data-pane="equalizer" type="button" aria-pressed="false">EQ</button>
+        </div>
+        <div class="full-player-transport"><span id="full-player-time">0:00</span><input id="full-player-seek" type="range" min="0" max="0" value="0" step="0.1" aria-label="Playback position"/><span id="full-player-duration">0:00</span><button id="full-player-toggle" type="button" aria-label="Play">▶</button></div>
+        <div id="full-player-visualizer" class="compact-visualizer" role="img" aria-label="Audio visualizer" hidden></div>
+        <p id="full-player-visualizer-status" class="full-player-visualizer-status" role="status" aria-live="polite" hidden></p>
+      </div>
+    </section>
 
     <dialog id="video-theater" class="video-theater" aria-label="Video player">
       <div id="video-theater-shell" class="video-theater-shell">
@@ -387,8 +421,7 @@
       </div>
     </dialog>
 
-    <dialog id="equalizer-dialog" class="equalizer-dialog" aria-labelledby="equalizer-title">
-      <form id="equalizer-form" method="dialog">
+    <form id="equalizer-form">
         <header class="equalizer-header">
           <div>
             <h2 id="equalizer-title">Equalizer</h2>
@@ -434,8 +467,7 @@
           <button id="equalizer-delete-preset" class="secondary-button" type="button" disabled>Delete</button>
         </div>
         <p id="equalizer-status" class="muted equalizer-status" role="status" aria-live="polite"></p>
-      </form>
-    </dialog>
+    </form>
 
     <dialog id="playlist-dialog" class="playlist-dialog">
       <form id="playlist-dialog-form" method="dialog">

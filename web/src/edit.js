@@ -1,4 +1,5 @@
 import { listMediaFiles, updateMediaMetadata, getMediaBlob, recordPuffinActivity } from "./library.js";
+import { fetchSyncedLyrics } from "./lyrics.js";
 
 const fields = ["title", "artist", "album", "genre", "year", "track"];
 const get = (id) => document.querySelector(`#${id}`);
@@ -90,6 +91,7 @@ export function initializeEdit() {
       const meta = document.createElement("div"); meta.className = "edit-track-meta";
       const detail = document.createElement("span"); detail.textContent = `${record.kind === "video" ? "Video" : "Audio"} · `;
       const duration = document.createElement("span"); duration.textContent = "…";
+      let measuredDuration = Number.isFinite(record.duration) ? record.duration : undefined;
       meta.append(detail, duration);
       const save = document.createElement("button"); save.type = "button"; save.className = "icon-button edit-save"; save.textContent = "✓"; save.title = "Save tags"; save.setAttribute("aria-label", `Save tags for ${titleFromName(record.name)}`);
       save.addEventListener("click", async () => {
@@ -100,10 +102,53 @@ export function initializeEdit() {
       });
       const smart = document.createElement("button"); smart.type = "button"; smart.className = "secondary-button edit-row-smart"; smart.textContent = "Smart Fill";
       smart.addEventListener("click", () => smartFill([record]));
-      row.append(check, artWrap, values, meta, smart, save); list.append(row);
-      getMediaBlob(record.id).then((blob) => blob && readDuration(blob)).then((seconds) => { duration.textContent = formatDuration(seconds); }).catch(() => { duration.textContent = "—"; });
+      const rowActions = document.createElement("div"); rowActions.className = "edit-row-actions"; rowActions.append(smart);
+      if (record.kind === "audio") {
+        const lyrics = document.createElement("button");
+        lyrics.type = "button";
+        lyrics.className = "icon-button edit-lyrics-download";
+        lyrics.textContent = "♫";
+        lyrics.title = record.syncedLyrics ? "Refresh synchronized lyrics" : "Download synchronized lyrics";
+        lyrics.setAttribute("aria-label", `${lyrics.title} for ${record.title || titleFromName(record.name)}`);
+        lyrics.addEventListener("click", async () => {
+          const trackName = inputs.title.value.trim() || titleFromName(record.name);
+          const artistName = inputs.artist.value.trim();
+          if (!artistName) { say(`Add an artist for ${trackName} before looking up lyrics.`); return; }
+          lyrics.disabled = true;
+          say(`Looking up synchronized lyrics for ${trackName}…`);
+          try {
+            if (!Number.isFinite(measuredDuration) || measuredDuration <= 0) {
+              const blob = await getMediaBlob(record.id);
+              if (blob) measuredDuration = await readDuration(blob);
+            }
+            const result = await fetchSyncedLyrics({
+              trackName,
+              artistName,
+              albumName: inputs.album.value.trim(),
+              duration: measuredDuration,
+            });
+            await updateMediaMetadata(record.id, {
+              syncedLyrics: result.syncedLyrics,
+              lyricsProvider: "LRCLIB",
+              lyricsRecordId: result.id,
+              lyricsFetchedAt: Date.now(),
+            });
+            say(`Synchronized lyrics saved for ${trackName}. They’re available offline.`);
+          } catch (error) {
+            say(error.message || `Could not download lyrics for ${trackName}.`);
+          } finally {
+            lyrics.disabled = false;
+          }
+        });
+        rowActions.append(lyrics);
+      }
+      row.append(check, artWrap, values, meta, rowActions, save); list.append(row);
+      getMediaBlob(record.id).then((blob) => blob && readDuration(blob)).then((seconds) => {
+        duration.textContent = formatDuration(seconds);
+        if (Number.isFinite(seconds) && seconds > 0) measuredDuration = seconds;
+      }).catch(() => { duration.textContent = "—"; });
     });
-    if (!records.length) { const empty = document.createElement("li"); empty.className = "playlist-empty-state"; empty.textContent = "Import media in Play to edit your library."; list.append(empty); }
+    if (!records.length) { const empty = document.createElement("li"); empty.className = "playlist-empty-state"; empty.textContent = "Add media to your library to edit its metadata."; list.append(empty); }
     updateCount();
   }
 

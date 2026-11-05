@@ -41,12 +41,15 @@ function readSavedState() {
 
 export function initializeEqualizer({ audioPlayer, videoPlayer }) {
   const openButton = document.querySelector("#player-equalizer-open");
-  const dialog = document.querySelector("#equalizer-dialog");
+  const fullscreenHost = document.querySelector("#full-player-equalizer");
+  const equalizerForm = document.querySelector("#equalizer-form");
+  fullscreenHost.append(equalizerForm);
+  equalizerForm.addEventListener("submit", (event) => event.preventDefault());
   const closeButton = document.querySelector("#equalizer-close");
   const enabledInput = document.querySelector("#equalizer-enabled");
   const presetSelect = document.querySelector("#equalizer-preset");
-  const bandInputs = [...dialog.querySelectorAll("[data-eq-band]")];
-  const bandOutputs = [...dialog.querySelectorAll("[data-eq-value]")];
+  const bandInputs = [...equalizerForm.querySelectorAll("[data-eq-band]")];
+  const bandOutputs = [...equalizerForm.querySelectorAll("[data-eq-value]")];
   const preampInput = document.querySelector("#equalizer-preamp");
   const preampOutput = document.querySelector("#equalizer-preamp-value");
   const presetNameInput = document.querySelector("#equalizer-custom-name");
@@ -55,7 +58,7 @@ export function initializeEqualizer({ audioPlayer, videoPlayer }) {
   const status = document.querySelector("#equalizer-status");
   const state = readSavedState();
   let audioContext;
-  let routes;
+  const routes = [];
 
   function persist() {
     try {
@@ -75,24 +78,36 @@ export function initializeEqualizer({ audioPlayer, videoPlayer }) {
   }
 
   function updateAudioGraph() {
-    if (!routes) return;
     const enabled = state.enabled;
     routes.forEach((route) => {
-      route.filters.forEach((filter, index) => {
+      route.filters?.forEach((filter, index) => {
         smooth(filter.gain, enabled ? state.bands[index] : 0);
       });
-      smooth(route.preamp.gain, enabled ? 10 ** (state.preamp / 20) : 1);
+      if (route.preamp) smooth(route.preamp.gain, enabled ? 10 ** (state.preamp / 20) : 1);
     });
   }
 
-  function createAudioGraph() {
-    if (routes) return;
+  function ensureAudioContext() {
+    if (audioContext) return;
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
     if (!AudioContextClass) throw new Error("This browser does not support audio equalizer controls.");
-
     audioContext = new AudioContextClass();
-    routes = [audioPlayer, videoPlayer].map((player) => {
+  }
+
+  function ensureAudioRoute(player, withEqualizer = false) {
+    ensureAudioContext();
+    let route = routes.find((item) => item.player === player);
+    if (!route) {
       const source = audioContext.createMediaElementSource(player);
+      const analyser = audioContext.createAnalyser();
+      analyser.fftSize = 512;
+      analyser.smoothingTimeConstant = 0.78;
+      source.connect(analyser);
+      analyser.connect(audioContext.destination);
+      route = { player, source, analyser, filters: null, preamp: null };
+      routes.push(route);
+    }
+    if (withEqualizer && !route.filters) {
       const filters = FREQUENCIES.map((frequency) => {
         const filter = audioContext.createBiquadFilter();
         filter.type = "peaking";
@@ -101,14 +116,21 @@ export function initializeEqualizer({ audioPlayer, videoPlayer }) {
         return filter;
       });
       const preamp = audioContext.createGain();
-      source.connect(filters[0]);
+      route.source.disconnect();
+      route.source.connect(filters[0]);
       filters.forEach((filter, index) => {
         if (index < filters.length - 1) filter.connect(filters[index + 1]);
         else filter.connect(preamp);
       });
-      preamp.connect(audioContext.destination);
-      return { filters, preamp };
-    });
+      preamp.connect(route.analyser);
+      route.filters = filters;
+      route.preamp = preamp;
+    }
+    return route;
+  }
+
+  function createAudioGraph() {
+    [audioPlayer, videoPlayer].forEach((player) => ensureAudioRoute(player, true));
     updateAudioGraph();
   }
 
@@ -183,18 +205,11 @@ export function initializeEqualizer({ audioPlayer, videoPlayer }) {
     }
     render();
     openButton.setAttribute("aria-expanded", "true");
-    dialog.showModal();
-    closeButton.focus();
+    window.dispatchEvent(new CustomEvent("puffin:player-mode", { detail: "equalizer" }));
   });
 
-  closeButton.addEventListener("click", () => dialog.close());
-  dialog.addEventListener("close", () => openButton.setAttribute("aria-expanded", "false"));
-  dialog.addEventListener("click", (event) => {
-    if (event.target === dialog) dialog.close();
-  });
-  dialog.addEventListener("cancel", () => openButton.setAttribute("aria-expanded", "false"));
-  dialog.addEventListener("close", () => openButton.focus());
-  openButton.setAttribute("aria-haspopup", "dialog");
+  closeButton.addEventListener("click", () => window.dispatchEvent(new CustomEvent("puffin:player-mode", { detail: "lyrics" })));
+  openButton.removeAttribute("aria-haspopup");
   openButton.setAttribute("aria-expanded", "false");
 
   enabledInput.addEventListener("change", () => {
@@ -281,5 +296,12 @@ export function initializeEqualizer({ audioPlayer, videoPlayer }) {
   });
 
   render();
-  return { frequencies: [...FREQUENCIES] };
+  return {
+    frequencies: [...FREQUENCIES],
+    async getAnalyser(player) {
+      const route = ensureAudioRoute(player);
+      if (audioContext.state !== "running") await audioContext.resume();
+      return route.analyser;
+    },
+  };
 }
