@@ -52,27 +52,26 @@ function normalizeForMatch(value) {
     .trim();
 }
 
-function matchingSyncedResult(results, { trackName, artistName, albumName, duration }) {
+export function selectSyncedLyricsMatch(results, { trackName, artistName, albumName = "", duration }) {
   if (!Array.isArray(results)) return null;
   const title = normalizeForMatch(trackName);
   const artist = normalizeForMatch(artistName);
   const album = normalizeForMatch(albumName);
   const durationSeconds = Number(duration);
+  const hasDuration = Number.isFinite(durationSeconds) && durationSeconds > 0;
+  const matchDuration = hasDuration ? Math.round(durationSeconds) : Number.NaN;
   const candidates = results.filter((result) => {
     if (!result?.syncedLyrics) return false;
     const candidateTitle = normalizeForMatch(result.trackName || result.name);
     const candidateArtist = normalizeForMatch(result.artistName);
-    const titleMatches = candidateTitle === title;
-    const artistMatches = candidateArtist === artist
-      || (candidateArtist.length > 3 && artist.includes(candidateArtist))
-      || (artist.length > 3 && candidateArtist.includes(artist));
-    if (!titleMatches || !artistMatches) return false;
-    return !Number.isFinite(durationSeconds) || durationSeconds <= 0
-      || !Number.isFinite(result.duration) || Math.abs(result.duration - durationSeconds) <= 8;
+    if (candidateTitle !== title || candidateArtist !== artist) return false;
+    const candidateDuration = typeof result.duration === "number" ? result.duration : Number.NaN;
+    if (hasDuration && (!Number.isFinite(candidateDuration) || Math.abs(candidateDuration - matchDuration) > 2)) return false;
+    return true;
   });
   candidates.sort((first, second) => {
-    const firstDuration = Number.isFinite(durationSeconds) ? Math.abs((first.duration || 0) - durationSeconds) : 0;
-    const secondDuration = Number.isFinite(durationSeconds) ? Math.abs((second.duration || 0) - durationSeconds) : 0;
+    const firstDuration = hasDuration ? Math.abs(first.duration - matchDuration) : 0;
+    const secondDuration = hasDuration ? Math.abs(second.duration - matchDuration) : 0;
     const firstAlbum = album && normalizeForMatch(first.albumName) === album ? 0 : 1;
     const secondAlbum = album && normalizeForMatch(second.albumName) === album ? 0 : 1;
     return firstAlbum - secondAlbum || firstDuration - secondDuration;
@@ -86,19 +85,29 @@ export async function fetchSyncedLyrics({ trackName, artistName, albumName = "",
   if (!cleanTrackName || !cleanArtistName) {
     throw new Error("Add both a song title and artist before looking up lyrics.");
   }
-
-  const params = new URLSearchParams({ track_name: cleanTrackName, artist_name: cleanArtistName });
-  if (albumName) params.set("album_name", String(albumName).trim());
   const durationSeconds = Number(duration);
-  if (Number.isFinite(durationSeconds) && durationSeconds >= 1 && durationSeconds <= 3600) {
-    params.set("duration", String(Math.round(durationSeconds)));
+  if (!Number.isFinite(durationSeconds) || durationSeconds < 1 || durationSeconds > 3600) {
+    throw new Error("Puffin couldn’t read this track’s duration, so it can’t safely match synchronized lyrics.");
   }
 
-  const exactMatch = await requestLyrics(`${LRCLIB_API}/get?${params}`);
-  if (exactMatch?.syncedLyrics) return exactMatch;
+  const exactParams = new URLSearchParams({ track_name: cleanTrackName, artist_name: cleanArtistName });
+  const searchParams = new URLSearchParams({ track_name: cleanTrackName, artist_name: cleanArtistName });
+  if (albumName) {
+    exactParams.set("album_name", String(albumName).trim());
+    searchParams.set("album_name", String(albumName).trim());
+  }
+  exactParams.set("duration", String(Math.round(durationSeconds)));
 
-  const searchMatch = await requestLyrics(`${LRCLIB_API}/search?${params}`);
-  const result = matchingSyncedResult(Array.isArray(searchMatch) ? searchMatch : [], {
+  const exactMatch = await requestLyrics(`${LRCLIB_API}/get?${exactParams}`);
+  if (selectSyncedLyricsMatch(exactMatch ? [exactMatch] : [], {
+    trackName: cleanTrackName,
+    artistName: cleanArtistName,
+    albumName,
+    duration: durationSeconds,
+  })) return exactMatch;
+
+  const searchMatch = await requestLyrics(`${LRCLIB_API}/search?${searchParams}`);
+  const result = selectSyncedLyricsMatch(Array.isArray(searchMatch) ? searchMatch : [], {
     trackName: cleanTrackName,
     artistName: cleanArtistName,
     albumName,
@@ -114,8 +123,8 @@ export async function fetchSyncedLyrics({ trackName, artistName, albumName = "",
 }
 
 export function parseSyncedLyrics(lrcText) {
-  const text = String(lrcText || "");
-  const offset = Number(text.match(/^\[offset:([+-]?\d+)\]\s*$/im)?.[1] || 0);
+  const text = String(lrcText || "").replace(/^\uFEFF/, "");
+  const offset = Number(text.match(/^\[offset:\s*([+-]?\d+)\s*\]\s*$/im)?.[1] || 0);
   const timestampPattern = /\[(\d{1,3}):(\d{2})(?:[.:](\d{1,3}))?\]/g;
   const lines = [];
   for (const rawLine of text.split(/\r?\n/)) {
@@ -124,15 +133,18 @@ export function parseSyncedLyrics(lrcText) {
     if (!content || stamps.length === 0) continue;
     stamps.forEach((stamp) => {
       const fraction = (stamp[3] || "").padEnd(3, "0").slice(0, 3);
-      const timestamp = Math.max(0, Number(stamp[1]) * 60 + Number(stamp[2]) + Number(`0.${fraction || "0"}`) + offset / 1000);
+      const timestamp = Math.max(0, Number(stamp[1]) * 60 + Number(stamp[2]) + Number(`0.${fraction || "0"}`) - offset / 1000);
       lines.push({ time: timestamp, text: content });
     });
   }
   return lines.sort((first, second) => first.time - second.time);
 }
 
-export function renderSyncedLyrics(container, lrcText) {
-  const lines = parseSyncedLyrics(lrcText);
+export function renderSyncedLyrics(container, lrcText, timingAdjustmentMs = 0) {
+  const adjustmentSeconds = Number.isFinite(Number(timingAdjustmentMs)) ? Number(timingAdjustmentMs) / 1000 : 0;
+  const lines = parseSyncedLyrics(lrcText)
+    .map((line) => ({ ...line, time: Math.max(0, line.time + adjustmentSeconds) }))
+    .sort((first, second) => first.time - second.time);
   const elements = lines.map((line) => {
     const item = document.createElement("li");
     item.dataset.time = String(line.time);
@@ -144,19 +156,25 @@ export function renderSyncedLyrics(container, lrcText) {
   return lines.length;
 }
 
-export function syncSyncedLyrics(container, currentTime) {
-  const state = lyricState.get(container);
-  if (!state || state.lines.length === 0 || !Number.isFinite(currentTime)) return;
+export function findSyncedLyricIndex(lines, currentTime) {
+  if (!Array.isArray(lines) || !Number.isFinite(currentTime)) return -1;
   let low = 0;
-  let high = state.lines.length - 1;
+  let high = lines.length - 1;
   let active = -1;
   while (low <= high) {
     const middle = (low + high) >> 1;
-    if (state.lines[middle].time <= currentTime) {
+    if (lines[middle].time <= currentTime) {
       active = middle;
       low = middle + 1;
     } else high = middle - 1;
   }
+  return active;
+}
+
+export function syncSyncedLyrics(container, currentTime) {
+  const state = lyricState.get(container);
+  if (!state || state.lines.length === 0 || !Number.isFinite(currentTime)) return;
+  const active = findSyncedLyricIndex(state.lines, currentTime);
   if (active === state.activeIndex) return;
   state.elements[state.activeIndex]?.removeAttribute("aria-current");
   state.elements[state.activeIndex]?.classList.remove("is-active");

@@ -1,4 +1,4 @@
-const CACHE_NAME = "puffin-shell-v22";
+const CACHE_NAME = "puffin-shell-v24";
 const APP_SHELL = [
   "/",
   "/index.html",

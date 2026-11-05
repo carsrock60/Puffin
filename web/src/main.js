@@ -234,7 +234,11 @@ window.addEventListener("offline", updateConnectionStatus);
 updateConnectionStatus();
 
 function renderPlayerLyrics(record = activeMediaRecord) {
-  const lineCount = renderSyncedLyrics(fullPlayerLyricsLines, record?.syncedLyrics || "");
+  const lineCount = renderSyncedLyrics(
+    fullPlayerLyricsLines,
+    record?.syncedLyrics || "",
+    record?.lyricsTimingAdjustmentMs || 0,
+  );
   fullPlayerLyricsEmpty.hidden = lineCount > 0;
   fullPlayerLyricsLines.hidden = lineCount === 0;
   fullPlayerLyricsCredit.hidden = lineCount === 0;
@@ -865,7 +869,10 @@ initializePlaylistLibrary({
 
 window.addEventListener("puffin:metadata-updated", (event) => {
   const record = event.detail;
-  if (!record || record.id !== activeMediaId) return;
+  if (!record) return;
+  const queuedRecord = queueRecords.find((item) => item.id === record.id);
+  if (queuedRecord) Object.assign(queuedRecord, record);
+  if (record.id !== activeMediaId) return;
   currentMediaTitle.textContent = record.title || record.name.replace(/\.[^.]+$/, "");
   playerSubtitle.textContent = record.kind === "video" ? `Video · ${record.artist || "Puffin Library"}` : (record.artist || "Puffin Library");
   if (playerFullscreen && !playerFullscreen.hidden && record.kind === "audio") {
@@ -1258,7 +1265,12 @@ playerDock.addEventListener("focusout", (event) => {
 
 initializeDownloader();
 initializeSettings();
-initializeEdit();
+initializeEdit({
+  onPreview: async (record) => {
+    await startPlayback(record);
+    return activeMediaId === record.id && activePlayer === audioPlayer && !audioPlayer.paused;
+  },
+});
 initializeHome({ onPlay: (record) => startPlayback(record, 0, record.kind === "video") });
 initializeStats();
 equalizerController = initializeEqualizer({ audioPlayer, videoPlayer });

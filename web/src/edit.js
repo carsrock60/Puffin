@@ -42,7 +42,7 @@ async function imageAsArtwork(file) {
   return canvas.toDataURL("image/jpeg", 0.86);
 }
 
-export function initializeEdit() {
+export function initializeEdit({ onPreview } = {}) {
   const list = get("edit-media-list");
   const status = get("edit-status");
   const selected = new Set();
@@ -110,6 +110,115 @@ export function initializeEdit() {
         lyrics.textContent = "♫";
         lyrics.title = record.syncedLyrics ? "Refresh synchronized lyrics" : "Download synchronized lyrics";
         lyrics.setAttribute("aria-label", `${lyrics.title} for ${record.title || titleFromName(record.name)}`);
+
+        const syncButton = document.createElement("button");
+        syncButton.type = "button";
+        syncButton.className = "icon-button edit-lyrics-sync";
+        syncButton.textContent = "✎";
+        syncButton.title = record.syncedLyrics ? "Adjust lyrics timing" : "Download synchronized lyrics first";
+        syncButton.setAttribute("aria-label", `Adjust lyrics timing for ${record.title || titleFromName(record.name)}`);
+        syncButton.setAttribute("aria-expanded", "false");
+        syncButton.disabled = !record.syncedLyrics;
+
+        const syncPanel = document.createElement("section");
+        syncPanel.className = "edit-lyrics-sync-panel";
+        syncPanel.setAttribute("aria-label", `Lyrics timing adjustment for ${record.title || titleFromName(record.name)}`);
+        syncPanel.hidden = true;
+        const syncPanelHeading = document.createElement("div");
+        syncPanelHeading.className = "edit-lyrics-sync-heading";
+        const syncPanelTitle = document.createElement("strong");
+        syncPanelTitle.textContent = "Adjust lyrics timing";
+        const syncPanelHint = document.createElement("span");
+        syncPanelHint.textContent = "− moves lyrics earlier, + moves them later. Changes save automatically and work offline.";
+        syncPanelHeading.append(syncPanelTitle, syncPanelHint);
+
+        const syncPanelActions = document.createElement("div");
+        syncPanelActions.className = "edit-lyrics-sync-actions";
+        const previewTrack = document.createElement("button");
+        previewTrack.type = "button";
+        previewTrack.className = "secondary-button edit-lyrics-preview";
+        previewTrack.textContent = "▶ Play from start";
+        previewTrack.disabled = typeof onPreview !== "function";
+        previewTrack.addEventListener("click", async () => {
+          previewTrack.disabled = true;
+          try {
+            const started = await onPreview?.(record);
+            say(started
+              ? `Playing ${record.title || titleFromName(record.name)}. Adjust the timing while it plays.`
+              : "Puffin couldn’t start this track for preview.");
+          } catch (error) {
+            say(error.message || "Puffin couldn’t start this track for preview.");
+          } finally {
+            previewTrack.disabled = typeof onPreview !== "function";
+          }
+        });
+
+        const adjustmentValue = document.createElement("strong");
+        adjustmentValue.className = "edit-lyrics-sync-value";
+        const adjustmentButtons = [];
+        const adjustmentGroup = document.createElement("div");
+        adjustmentGroup.className = "edit-lyrics-sync-steps";
+        const currentAdjustment = () => {
+          const value = Number(record.lyricsTimingAdjustmentMs);
+          return Number.isFinite(value) ? value : 0;
+        };
+        const updateAdjustmentValue = () => {
+          const value = currentAdjustment();
+          adjustmentValue.textContent = value === 0
+            ? "No adjustment"
+            : `${(Math.abs(value) / 1000).toFixed(1)} s ${value > 0 ? "later" : "earlier"}`;
+        };
+        let adjustmentSaving = false;
+        const saveAdjustment = async (value) => {
+          if (adjustmentSaving) return;
+          adjustmentSaving = true;
+          [...adjustmentButtons, resetAdjustment].forEach((button) => { button.disabled = true; });
+          try {
+            const updatedRecord = await updateMediaMetadata(record.id, { lyricsTimingAdjustmentMs: value });
+            Object.assign(record, updatedRecord);
+            updateAdjustmentValue();
+            say(`Lyrics timing saved for ${record.title || titleFromName(record.name)}.`);
+          } catch (error) {
+            say(error.message || "Could not save the lyrics timing adjustment.");
+          } finally {
+            adjustmentSaving = false;
+            adjustmentButtons.forEach((button) => { button.disabled = false; });
+            resetAdjustment.disabled = currentAdjustment() === 0;
+          }
+        };
+        for (const [label, change, direction] of [
+          ["−0.5 s", -500, "earlier"],
+          ["−0.1 s", -100, "earlier"],
+          ["+0.1 s", 100, "later"],
+          ["+0.5 s", 500, "later"],
+        ]) {
+          const step = document.createElement("button");
+          step.type = "button";
+          step.className = "secondary-button";
+          step.textContent = label;
+          step.setAttribute("aria-label", `Move lyrics ${direction} by ${Math.abs(change) / 1000} seconds`);
+          step.addEventListener("click", () => saveAdjustment(currentAdjustment() + change));
+          adjustmentButtons.push(step);
+          adjustmentGroup.append(step);
+        }
+        const resetAdjustment = document.createElement("button");
+        resetAdjustment.type = "button";
+        resetAdjustment.className = "secondary-button edit-lyrics-sync-reset";
+        resetAdjustment.textContent = "Reset";
+        resetAdjustment.disabled = currentAdjustment() === 0;
+        resetAdjustment.addEventListener("click", () => saveAdjustment(0));
+        adjustmentButtons.push(resetAdjustment);
+        updateAdjustmentValue();
+        syncPanelActions.append(previewTrack, adjustmentValue, adjustmentGroup);
+        syncPanel.append(syncPanelHeading, syncPanelActions);
+
+        syncButton.addEventListener("click", () => {
+          syncPanel.hidden = !syncPanel.hidden;
+          syncButton.setAttribute("aria-expanded", String(!syncPanel.hidden));
+          syncButton.textContent = syncPanel.hidden ? "✎" : "×";
+          syncButton.title = syncPanel.hidden ? "Adjust lyrics timing" : "Close lyrics timing adjustment";
+        });
+
         lyrics.addEventListener("click", async () => {
           const trackName = inputs.title.value.trim() || titleFromName(record.name);
           const artistName = inputs.artist.value.trim();
@@ -127,12 +236,15 @@ export function initializeEdit() {
               albumName: inputs.album.value.trim(),
               duration: measuredDuration,
             });
-            await updateMediaMetadata(record.id, {
+            const updatedRecord = await updateMediaMetadata(record.id, {
               syncedLyrics: result.syncedLyrics,
               lyricsProvider: "LRCLIB",
               lyricsRecordId: result.id,
               lyricsFetchedAt: Date.now(),
             });
+            Object.assign(record, updatedRecord);
+            syncButton.disabled = false;
+            syncButton.title = "Adjust lyrics timing";
             say(`Synchronized lyrics saved for ${trackName}. They’re available offline.`);
           } catch (error) {
             say(error.message || `Could not download lyrics for ${trackName}.`);
@@ -140,9 +252,11 @@ export function initializeEdit() {
             lyrics.disabled = false;
           }
         });
-        rowActions.append(lyrics);
+        rowActions.append(lyrics, syncButton);
+        row.append(syncPanel);
       }
-      row.append(check, artWrap, values, meta, rowActions, save); list.append(row);
+      row.prepend(check, artWrap, values, meta, rowActions, save);
+      list.append(row);
       getMediaBlob(record.id).then((blob) => blob && readDuration(blob)).then((seconds) => {
         duration.textContent = formatDuration(seconds);
         if (Number.isFinite(seconds) && seconds > 0) measuredDuration = seconds;
