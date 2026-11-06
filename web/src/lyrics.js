@@ -141,6 +141,9 @@ export function parseSyncedLyrics(lrcText) {
 }
 
 export function renderSyncedLyrics(container, lrcText, timingAdjustmentMs = 0) {
+  const previousState = lyricState.get(container);
+  if (previousState?.scrollFrame) cancelAnimationFrame(previousState.scrollFrame);
+  container.scrollTop = 0;
   const adjustmentSeconds = Number.isFinite(Number(timingAdjustmentMs)) ? Number(timingAdjustmentMs) / 1000 : 0;
   const lines = parseSyncedLyrics(lrcText)
     .map((line) => ({ ...line, time: Math.max(0, line.time + adjustmentSeconds) }))
@@ -152,7 +155,7 @@ export function renderSyncedLyrics(container, lrcText, timingAdjustmentMs = 0) {
     return item;
   });
   container.replaceChildren(...elements);
-  lyricState.set(container, { lines, elements, activeIndex: -1 });
+  lyricState.set(container, { lines, elements, activeIndex: -1, scrollFrame: 0 });
   return lines.length;
 }
 
@@ -186,6 +189,26 @@ export function syncSyncedLyrics(container, currentTime) {
     const lineRect = state.elements[active].getBoundingClientRect();
     const centeredTop = container.scrollTop + lineRect.top - containerRect.top
       - (container.clientHeight - lineRect.height) / 2;
-    container.scrollTop = Math.max(0, centeredTop);
+    const targetTop = Math.max(0, centeredTop);
+    if (state.scrollFrame) cancelAnimationFrame(state.scrollFrame);
+    const startTop = container.scrollTop;
+    const distance = targetTop - startTop;
+    const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    if (reduceMotion || Math.abs(distance) < 1) {
+      container.scrollTop = targetTop;
+      state.scrollFrame = 0;
+      return;
+    }
+
+    const startedAt = performance.now();
+    const duration = 240;
+    const animateScroll = (now) => {
+      const progress = Math.min(1, (now - startedAt) / duration);
+      const eased = 1 - (1 - progress) ** 3;
+      container.scrollTop = startTop + distance * eased;
+      if (progress < 1) state.scrollFrame = requestAnimationFrame(animateScroll);
+      else state.scrollFrame = 0;
+    };
+    state.scrollFrame = requestAnimationFrame(animateScroll);
   }
 }
