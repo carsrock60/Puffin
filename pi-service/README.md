@@ -4,6 +4,8 @@ The Pi service runs `yt-dlp` as a private, job-based API. Puffin requests an aud
 
 The service accepts HTTPS YouTube URLs and `ytsearch:` search queries. Audio downloads preserve yt-dlp's audio-only source format when the requesting browser supports it; Puffin sends its supported audio formats with the request. If necessary, the Pi remuxes AAC into M4A without re-encoding, or converts incompatible audio to AAC/M4A at 192 kb/s. Puffin can search YouTube through the Pi's `GET /api/search?q=...` endpoint; this uses yt-dlp's flat search to return up to 10 video titles, channels, durations, URLs, and thumbnails without downloading media. CSV batches can submit a `ytsearch:` query for each `Track Name`, `Artist Name`, and `Album` row. Video downloads require the source to offer H.264 and AAC streams; the service reports an error when those formats are unavailable rather than returning a less-compatible codec. It permits one active download or file transfer at a time. A new request replaces an older completed file that Puffin did not confirm. The default temporary file limit is 2 GiB, and the default free-space reserve is 1 GiB. An unconfirmed file is removed after one hour. Job state is held in memory, so a Pi restart cancels active jobs and clears abandoned Puffin job folders.
 
+YouTube now requires yt-dlp's JavaScript challenge solver and an external JavaScript runtime for full extraction support. The setup below installs the matching `yt-dlp-ejs` dependency and Deno. Puffin invokes yt-dlp through the service's own virtual-environment Python interpreter, so it does not depend on shell activation or systemd finding yt-dlp through `PATH`. [yt-dlp EJS setup](https://github.com/yt-dlp/yt-dlp/wiki/EJS)
+
 ## Install on Raspberry Pi OS
 
 Clone the repository onto the Pi, then install the system dependencies and Python environment. These commands assume Raspberry Pi OS and that you will clone the repo into `~/Puffin`:
@@ -11,12 +13,42 @@ Clone the repository onto the Pi, then install the system dependencies and Pytho
 ```sh
 git clone https://github.com/carsrock60/Puffin.git ~/Puffin
 sudo apt update
-sudo apt install -y python3-venv ffmpeg
+sudo apt install -y python3-venv ffmpeg curl
+curl -fsSL https://deno.land/install.sh | sh
+export PATH="$HOME/.deno/bin:$PATH"
 cd ~/Puffin/pi-service
 python3 -m venv .venv
 .venv/bin/python -m pip install --upgrade pip
-.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python -m pip install --upgrade -r requirements.txt
+deno --version
+.venv/bin/python -m yt_dlp --version
 ```
+
+### Update an existing Pi installation
+
+Pull the service changes and update the virtual-environment packages. If Deno is not installed for the Pi service user, install it. For a systemd installation, also add the `Environment=PATH=...` line shown below to `/etc/systemd/system/puffin-downloader.service` under `[Service]`, replacing `YOUR_PI_USER` with the Pi account name:
+
+```sh
+cd ~/Puffin
+git pull --ff-only
+cd pi-service
+curl -fsSL https://deno.land/install.sh | sh
+.venv/bin/python -m pip install --upgrade -r requirements.txt
+.venv/bin/python -m yt_dlp --version
+deno --version
+sudo nano /etc/systemd/system/puffin-downloader.service
+sudo systemctl daemon-reload
+sudo systemctl restart puffin-downloader
+sudo systemctl status puffin-downloader
+```
+
+The service unit needs this line, with the actual Pi username in place of `YOUR_PI_USER`:
+
+```ini
+Environment=PATH=/home/YOUR_PI_USER/.deno/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+```
+
+If Deno is already installed, the install command can be skipped. The service must be restarted after updating so it uses the new code and dependencies.
 
 Set the allowed browser origins. Include the Vercel site origin and the local Vite origin used during development. Origins have no trailing slash. For example, if your deployed app is `https://puffin.vercel.app`, include that exact origin:
 
@@ -56,7 +88,7 @@ PUFFIN_MAX_DOWNLOAD_BYTES=2147483648
 PUFFIN_MIN_FREE_BYTES=1073741824
 ```
 
-Replace the placeholder values, then enable the service:
+Replace the placeholder values. The systemd example includes Deno's install directory in `PATH`; update that line if Deno is installed elsewhere. Then enable the service:
 
 ```sh
 sudo chmod 600 /etc/puffin-downloader.env

@@ -8,7 +8,9 @@ import mimetypes
 import os
 import re
 import shutil
+import signal
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -50,6 +52,62 @@ AUDIO_MIME_TYPES = {
     "webm": "audio/webm",
 }
 SUPPORTED_AUDIO_EXTENSIONS = set(AUDIO_MIME_TYPES)
+
+
+class DownloadFailure(Exception):
+    """A download or conversion failed for a known, user-actionable reason."""
+
+
+def _yt_dlp_command(*arguments: str) -> list[str]:
+    # Use the exact interpreter running this service. systemd does not
+    # activate the virtual environment's bin directory in PATH.
+    return [sys.executable, "-m", "yt_dlp", *arguments]
+
+
+def _signal_process_group(process: subprocess.Popen, force: bool = False) -> None:
+    if process.poll() is not None:
+        return
+    try:
+        os.killpg(process.pid, signal.SIGKILL if force else signal.SIGTERM)
+    except (ProcessLookupError, PermissionError):
+        try:
+            process.kill() if force else process.terminate()
+        except ProcessLookupError:
+            pass
+
+
+def _terminate_process_group(process: subprocess.Popen) -> None:
+    _signal_process_group(process)
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        _signal_process_group(process, force=True)
+        process.wait()
+
+
+def _safe_diagnostic(line: str) -> str:
+    line = re.sub(r"https?://\S+", "[URL]", line)
+    return " ".join(line.split())[:240]
+
+
+def _yt_dlp_failure_message(lines: list[str], return_code: int) -> str:
+    output = "\n".join(lines)
+    lowered = output.lower()
+    if "no module named yt_dlp" in lowered:
+        return "yt-dlp is missing from the service virtual environment. Run pip install -r requirements.txt and restart the Pi service."
+    if "requested format is not available" in lowered:
+        return "This video does not offer an H.264 video stream with AAC audio."
+    if any(term in lowered for term in ("javascript runtime", "javascript challenge", "yt-dlp-ejs", "[jsc]")):
+        return "YouTube could not run its JavaScript challenge solver. Install Deno and update the Pi service requirements, then restart the service."
+    if "http error 429" in lowered or "too many requests" in lowered:
+        return "YouTube temporarily rate-limited the Pi. Wait a little and retry."
+    if "sign in to confirm" in lowered or "private video" in lowered or "requires authentication" in lowered:
+        return "This video requires sign-in or is not publicly available."
+
+    for line in reversed(lines):
+        if "error:" in line.lower():
+            return f"yt-dlp failed: {_safe_diagnostic(line)}"
+    return f"yt-dlp exited with code {return_code}. Check the Pi service logs for details."
 
 
 def _is_allowed_media_url(value: object) -> bool:
@@ -98,7 +156,9 @@ def _ensure_supported_audio(path: Path, supported_formats: list[str], job: dict)
             text=True,
         )
         if encoded.returncode != 0:
-            raise RuntimeError("Could not convert this audio to a Puffin-compatible M4A file")
+            detail = (encoded.stderr or copied.stderr or "").strip().splitlines()
+            summary = _safe_diagnostic(detail[-1]) if detail else "ffmpeg returned an error"
+            raise DownloadFailure(f"Could not convert this audio to a Puffin-compatible M4A file: {summary}")
 
     path.unlink(missing_ok=True)
     return output_path
@@ -120,15 +180,14 @@ def _public_job(job: dict) -> dict:
 
 
 def _search_youtube(query: str) -> list[dict]:
-    command = [
-        "yt-dlp",
+    command = _yt_dlp_command(
         "--dump-single-json",
         "--flat-playlist",
         "--skip-download",
         "--quiet",
         "--no-warnings",
         f"ytsearch10:{query}",
-    ]
+    )
     result = subprocess.run(command, capture_output=True, text=True, timeout=30, check=True)
     payload = json.loads(result.stdout)
     videos = []
@@ -164,15 +223,16 @@ def _run_download(job_id: str) -> None:
             return
         if job["cancel_requested"]:
             job["status"] = "cancelled"
+            job["worker_active"] = False
             job["updated_at"] = time.time()
+            _remove_work_directory(job)
             return
         job["status"] = "downloading"
         job["updated_at"] = time.time()
 
     work_dir = Path(job["work_dir"])
     output_template = str(work_dir / "%(title).160s [%(id)s].%(ext)s")
-    command = [
-        "yt-dlp",
+    command = _yt_dlp_command(
         "--no-playlist",
         "--newline",
         "--progress",
@@ -180,11 +240,17 @@ def _run_download(job_id: str) -> None:
         "--no-write-thumbnail",
         "--no-write-subs",
         "--no-overwrites",
+        "--retry-sleep",
+        "http:linear=1:5",
+        "--retry-sleep",
+        "fragment:linear=1:5",
+        "--retry-sleep",
+        "extractor:linear=1:3",
         "--max-filesize",
         str(MAX_DOWNLOAD_BYTES),
         "--output",
         output_template,
-    ]
+    )
 
     if job["kind"] == "audio":
         command.extend([
@@ -202,6 +268,7 @@ def _run_download(job_id: str) -> None:
 
     process = None
     compatible_format_missing = False
+    output_tail = []
     try:
         process = subprocess.Popen(
             command,
@@ -210,26 +277,30 @@ def _run_download(job_id: str) -> None:
             text=True,
             errors="replace",
             bufsize=1,
+            start_new_session=True,
         )
         with JOBS_LOCK:
             current_job = JOBS.get(job_id)
             if not current_job:
-                process.terminate()
+                _signal_process_group(process)
                 return
             current_job["process"] = process
             if current_job["cancel_requested"]:
-                process.terminate()
+                _signal_process_group(process)
 
         for line in process.stdout or []:
+            output_tail.append(line.strip())
+            if len(output_tail) > 40:
+                del output_tail[0]
             if "Requested format is not available" in line:
                 compatible_format_missing = True
             with JOBS_LOCK:
                 current_job = JOBS.get(job_id)
                 if not current_job:
-                    process.terminate()
+                    _signal_process_group(process)
                     break
                 if current_job["cancel_requested"]:
-                    process.terminate()
+                    _signal_process_group(process)
                     break
                 if "[Merger]" in line or ("[ExtractAudio]" in line and "Not converting audio" not in line):
                     current_job["status"] = "converting"
@@ -255,37 +326,55 @@ def _run_download(job_id: str) -> None:
             current_job["process"] = None
             if current_job["cancel_requested"]:
                 current_job["status"] = "cancelled"
+                current_job["worker_active"] = False
                 current_job["updated_at"] = time.time()
                 _remove_work_directory(current_job)
                 return
 
         if return_code != 0:
             if compatible_format_missing:
-                _fail_job(job_id, "This video does not offer an H.264 video stream with AAC audio.")
-                return
-            raise RuntimeError(f"yt-dlp exited with code {return_code}")
+                raise DownloadFailure("This video does not offer an H.264 video stream with AAC audio.")
+            raise DownloadFailure(_yt_dlp_failure_message(output_tail, return_code))
 
         output_files = [
             path for path in work_dir.iterdir()
             if path.is_file() and not path.name.endswith((".part", ".ytdl", ".json", ".jpg", ".webp"))
         ]
         if not output_files:
-            raise RuntimeError("yt-dlp completed without producing a media file")
+            raise DownloadFailure("yt-dlp finished but did not create a media file. Check the Pi service logs for details.")
 
         output_file = max(output_files, key=lambda path: path.stat().st_mtime)
         if job["kind"] == "audio":
             output_file = _ensure_supported_audio(output_file, job.get("supported_audio_formats") or [], job)
+        with JOBS_LOCK:
+            current_job = JOBS.get(job_id)
+            if not current_job:
+                _remove_work_directory(job)
+                return
+            if current_job["cancel_requested"]:
+                current_job["status"] = "cancelled"
+                current_job["worker_active"] = False
+                current_job["updated_at"] = time.time()
+                _remove_work_directory(current_job)
+                return
         output_size = output_file.stat().st_size
         if output_size > MAX_DOWNLOAD_BYTES:
-            raise RuntimeError("Downloaded file exceeds the configured size limit")
+            raise DownloadFailure("The download exceeded the configured file size limit.")
 
         with JOBS_LOCK:
             current_job = JOBS.get(job_id)
             if not current_job:
                 _remove_work_directory(job)
                 return
+            if current_job["cancel_requested"]:
+                current_job["status"] = "cancelled"
+                current_job["worker_active"] = False
+                current_job["updated_at"] = time.time()
+                _remove_work_directory(current_job)
+                return
             current_job.update({
                 "status": "ready",
+                "worker_active": False,
                 "progress": 100,
                 "filename": _safe_filename(output_file),
                 "file_path": str(output_file),
@@ -295,11 +384,19 @@ def _run_download(job_id: str) -> None:
                 "updated_at": time.time(),
             })
         LOGGER.info("Download job %s is ready (%s bytes)", job_id, output_size)
-    except FileNotFoundError:
-        _fail_job(job_id, "yt-dlp is not installed on the Pi. Install the service requirements and restart it.")
-    except Exception as error:  # Keep subprocess details out of API responses and logs.
-        _fail_job(job_id, "The download failed. Check the link, available formats, and Pi service logs.")
-        LOGGER.warning("Download job %s failed: %s", job_id, type(error).__name__)
+    except FileNotFoundError as error:
+        if process and process.poll() is None:
+            _terminate_process_group(process)
+        message = "A required Pi tool or media file is missing. Check that Deno and ffmpeg are installed and retry."
+        _fail_job(job_id, message)
+        LOGGER.warning("Download job %s failed (%s): %s", job_id, type(error).__name__, message)
+    except Exception as error:
+        if process and process.poll() is None:
+            _terminate_process_group(process)
+        message = str(error) if isinstance(error, DownloadFailure) else "The download failed unexpectedly. Check the Pi service logs for details."
+        message = _safe_diagnostic(message)
+        _fail_job(job_id, message)
+        LOGGER.warning("Download job %s failed (%s): %s", job_id, type(error).__name__, message)
 
 
 def _fail_job(job_id: str, message: str) -> None:
@@ -308,6 +405,7 @@ def _fail_job(job_id: str, message: str) -> None:
         if not job:
             return
         job["process"] = None
+        job["worker_active"] = False
         job["status"] = "failed"
         job["error"] = message
         job["updated_at"] = time.time()
@@ -568,11 +666,18 @@ class PuffinHandler(BaseHTTPRequestHandler):
                 "ready_at": None,
                 "process": None,
                 "cancel_requested": False,
+                "worker_active": True,
                 "transfers": 0,
             }
             JOBS[job_id] = job
 
-        threading.Thread(target=_run_download, args=(job_id,), daemon=True).start()
+        try:
+            threading.Thread(target=_run_download, args=(job_id,), daemon=True).start()
+        except RuntimeError as error:
+            _fail_job(job_id, "The Pi could not start a download worker. Restart the downloader service and try again.")
+            LOGGER.error("Could not start download job %s worker: %s", job_id, type(error).__name__)
+            self._json(503, {"error": "The Pi is busy and could not start a download. Try again shortly."})
+            return
         self._json(202, _public_job(job))
 
     def _complete_download(self, job_id: str) -> None:
@@ -613,12 +718,13 @@ class PuffinHandler(BaseHTTPRequestHandler):
             job["cancel_requested"] = True
             process = job.get("process")
             if process and process.poll() is None:
-                process.terminate()
+                _signal_process_group(process)
             if job["status"] == "ready":
                 _remove_work_directory(job)
                 del JOBS[job_id]
-            elif process and process.poll() is None:
-                # Keep the job active until yt-dlp exits so another job cannot overlap it.
+            elif job.get("worker_active"):
+                # Let the worker clean up its directory once it has stopped
+                # using it; removing it here races with post-download checks.
                 pass
             else:
                 job["status"] = "cancelled"
