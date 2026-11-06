@@ -29,6 +29,9 @@ export function initializeSettings() {
   const musicAtlasForm = document.querySelector("#settings-musicatlas-form");
   const musicAtlasKey = document.querySelector("#settings-musicatlas-key");
   const homeStatus = document.querySelector("#settings-home-status");
+  const acoustidForm = document.querySelector("#settings-acoustid-form");
+  const acoustidKey = document.querySelector("#settings-acoustid-key");
+  const acoustidStatus = document.querySelector("#settings-acoustid-status");
   const clearHistoryButton = document.querySelector("#settings-clear-history");
   const piOptions = document.querySelector("#settings-pi-options");
   const piAddress = document.querySelector("#settings-pi-address");
@@ -40,6 +43,7 @@ export function initializeSettings() {
   showRecent.checked = homePreferences.showRecentlyPlayed;
   showPicks.checked = homePreferences.showMusicPicks;
   musicAtlasKey.value = homePreferences.musicAtlasApiKey;
+  acoustidKey.value = homePreferences.acoustidClientKey;
   const downloadPreferences = getDownloadPreferences();
   piAddress.value = downloadPreferences.piAddress;
   piOptions.hidden = false;
@@ -117,6 +121,7 @@ export function initializeSettings() {
         showRecentlyPlayed: showRecent.checked,
         showMusicPicks: showPicks.checked,
         musicAtlasApiKey: musicAtlasKey.value,
+        acoustidClientKey: acoustidKey.value,
       });
       homeStatus.textContent = "Home preferences saved on this device.";
     } catch (error) {
@@ -128,6 +133,20 @@ export function initializeSettings() {
   musicAtlasForm.addEventListener("submit", (event) => {
     event.preventDefault();
     persistHomeVisibility();
+  });
+  acoustidForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    try {
+      saveHomePreferences({
+        showRecentlyPlayed: showRecent.checked,
+        showMusicPicks: showPicks.checked,
+        musicAtlasApiKey: musicAtlasKey.value,
+        acoustidClientKey: acoustidKey.value,
+      });
+      acoustidStatus.textContent = "AcoustID key saved on this device.";
+    } catch (error) {
+      acoustidStatus.textContent = error.message;
+    }
   });
   function persistDownloadPreferences() {
     try {

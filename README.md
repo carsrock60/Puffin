@@ -24,6 +24,8 @@ The Edit tab is a music tag editor with the following features:
 - **Filename and tag conversion:** Convert between filenames and tags using custom naming masks.
 - **Metadata lookup:** Look up metadata from online sources such as MusicBrainz.
 
+Smart Fill fingerprints audio in the browser when an AcoustID application key is configured in **Settings → Home**. Without that optional key it uses an exact title and artist search instead. Groq's `openai/gpt-oss-20b` ranks MusicBrainz candidates and can leave them unselected when it cannot confirm a good match. For the deployed app, add `GROQ_API_KEY` to the Vercel project's Environment Variables and redeploy; the key is only read by the Python service and is never sent to browsers. The Python service validates model output with Pydantic before returning candidates. Run the Vercel Services project with `vercel dev` when testing the Groq ranking endpoint locally.
+
 ## Watch
 
 The Watch page gathers videos saved in the device's Puffin library. It features a featured video, Continue Watching, Recently Watched, and a searchable video library. Video playlists created in Play can filter the Watch library. Puffin saves watch progress on the device so playback can resume later. The expanded player includes seeking, volume, playback speed, and fullscreen controls; closing it returns playback to the mini-player.

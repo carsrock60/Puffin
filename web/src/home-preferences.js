@@ -4,6 +4,7 @@ const DEFAULT_PREFERENCES = {
   showRecentlyPlayed: true,
   showMusicPicks: true,
   musicAtlasApiKey: "",
+  acoustidClientKey: "",
 };
 
 export function getHomePreferences() {
@@ -13,6 +14,7 @@ export function getHomePreferences() {
       showRecentlyPlayed: saved.showRecentlyPlayed !== false,
       showMusicPicks: saved.showMusicPicks !== false,
       musicAtlasApiKey: typeof saved.musicAtlasApiKey === "string" ? saved.musicAtlasApiKey : "",
+      acoustidClientKey: typeof saved.acoustidClientKey === "string" ? saved.acoustidClientKey : "",
     };
   } catch {
     return { ...DEFAULT_PREFERENCES };
@@ -24,6 +26,7 @@ export function saveHomePreferences(preferences) {
     showRecentlyPlayed: Boolean(preferences.showRecentlyPlayed),
     showMusicPicks: Boolean(preferences.showMusicPicks),
     musicAtlasApiKey: String(preferences.musicAtlasApiKey || "").trim(),
+    acoustidClientKey: String(preferences.acoustidClientKey || "").trim(),
   };
   try {
     localStorage.setItem(PREFERENCES_KEY, JSON.stringify(next));

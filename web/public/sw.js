@@ -1,4 +1,4 @@
-const CACHE_NAME = "puffin-shell-v25";
+const CACHE_NAME = "puffin-shell-v26";
 const APP_SHELL = [
   "/",
   "/index.html",
@@ -16,15 +16,21 @@ async function cacheModuleGraph(cache, moduleUrl, visited = new Set()) {
   const response = await fetch(moduleUrl);
   if (!response.ok) throw new Error(`Could not cache app module: ${moduleUrl}`);
 
-  const source = await response.clone().text();
+  const isWasm = new URL(moduleUrl).pathname.endsWith(".wasm");
+  const source = isWasm ? "" : await response.clone().text();
   await cache.put(moduleUrl, response);
+  if (isWasm) return;
 
   const importPaths = Array.from(
     source.matchAll(/\b(?:import|export)\s+(?:[^'";]*?\s+from\s+)?["']([^"']+)["']/g),
     (match) => match[1],
   );
+  const bundledAssetPaths = Array.from(
+    source.matchAll(/["'`]((?:\/|\.\/)[^"'`]+\.(?:js|wasm))["'`]/g),
+    (match) => match[1],
+  );
 
-  await Promise.all(importPaths.map((importPath) => {
+  await Promise.all([...importPaths, ...bundledAssetPaths].map((importPath) => {
     const importUrl = new URL(importPath, moduleUrl);
     if (importUrl.origin !== self.location.origin) return Promise.resolve();
     return cacheModuleGraph(cache, importUrl.href, visited);
@@ -85,7 +91,8 @@ self.addEventListener("fetch", (event) => {
   const isNavigation = request.mode === "navigate";
   const isAppShellAsset = APP_SHELL.includes(requestUrl.pathname)
     || request.destination === "script"
-    || request.destination === "style";
+    || request.destination === "style"
+    || requestUrl.pathname.endsWith(".wasm");
   if (!isNavigation && !isAppShellAsset) return;
 
   event.respondWith(

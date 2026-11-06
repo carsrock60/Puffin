@@ -4,9 +4,20 @@
     "web": {
       "root": "web",
       "framework": "vite"
+    },
+    "smart_fill": {
+      "root": "groq-service",
+      "framework": "fastapi",
+      "entrypoint": "main:app"
     }
   },
   "rewrites": [
+    {
+      "source": "/api/smart-fill/(.*)",
+      "destination": {
+        "service": "smart_fill"
+      }
+    },
     {
       "source": "/(.*)",
       "destination": {

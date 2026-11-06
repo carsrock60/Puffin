@@ -497,6 +497,21 @@
       <img id="artwork-preview-image" alt="Artwork preview" />
     </dialog>
 
+    <dialog id="smart-fill-preview" class="smart-fill-preview-dialog" aria-labelledby="smart-fill-preview-title">
+      <div class="smart-fill-preview-content">
+        <header>
+          <h2 id="smart-fill-preview-title">Choose the right recordings</h2>
+          <p id="smart-fill-preview-summary" class="muted">Puffin fingerprints audio in this browser. AcoustID receives the fingerprint and duration, not the audio file.</p>
+        </header>
+        <div id="smart-fill-preview-list" class="smart-fill-preview-list"></div>
+        <footer class="smart-fill-preview-actions">
+          <button id="smart-fill-cancel" class="secondary-button" type="button">No, cancel</button>
+          <button id="smart-fill-back" class="secondary-button" type="button" hidden>Back to recordings</button>
+          <button id="smart-fill-apply" class="primary-button" type="button">Review selected recordings</button>
+        </footer>
+      </div>
+    </dialog>
+
     <dialog id="settings-dialog" class="settings-dialog" aria-labelledby="settings-title">
       <div class="settings-layout">
         <aside class="settings-sidebar" aria-label="Settings sections">
@@ -531,6 +546,12 @@
                 <p class="muted settings-hint">Puffin saves this key on this device. <a href="https://musicatlas.ai/developer/request-key" target="_blank" rel="noreferrer">Get a free MusicAtlas API key</a>. The free tier includes 100 requests per day.</p>
                 <button class="primary-button" type="submit">Save MusicAtlas key</button>
                 <p id="settings-home-status" class="muted" role="status" aria-live="polite"></p>
+              </form>
+              <form id="settings-acoustid-form" class="settings-storage-form">
+                <label class="form-field" for="settings-acoustid-key"><span>AcoustID application key</span><input id="settings-acoustid-key" type="password" autocomplete="off" placeholder="Paste your application key" /></label>
+                <p class="muted settings-hint">Used to identify local audio in your browser. <a href="https://acoustid.org/new-application" target="_blank" rel="noreferrer">Register a free application key</a>. AcoustID’s free service is for non-commercial use.</p>
+                <button class="primary-button" type="submit">Save AcoustID key</button>
+                <p id="settings-acoustid-status" class="muted" role="status" aria-live="polite"></p>
               </form>
               <div class="settings-clear-history">
                 <div><strong>Recently played history</strong><p class="muted">Remove all songs from the Recently played section.</p></div>

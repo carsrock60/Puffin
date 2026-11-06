@@ -1,5 +1,7 @@
 import { listMediaFiles, updateMediaMetadata, getMediaBlob, recordPuffinActivity } from "./library.js";
 import { fetchSyncedLyrics } from "./lyrics.js";
+import { fingerprintAudioBlob, lookupAcoustID } from "./audio-fingerprint.js";
+import { getHomePreferences } from "./home-preferences.js";
 
 const fields = ["title", "artist", "album", "genre", "year", "track"];
 const get = (id) => document.querySelector(`#${id}`);
@@ -9,6 +11,10 @@ function titleFromName(name) { const suffix = extension(name); return (suffix ? 
 function formatDuration(seconds) {
   if (!Number.isFinite(seconds)) return "—";
   return `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
+}
+function validDuration(value) {
+  const seconds = Number(value);
+  return Number.isFinite(seconds) && seconds > 0 ? seconds : NaN;
 }
 function readDuration(blob) {
   return new Promise((resolve) => {
@@ -48,7 +54,18 @@ export function initializeEdit({ onPreview } = {}) {
   const selected = new Set();
   const preview = get("artwork-preview");
   const previewImage = get("artwork-preview-image");
+  const smartFillDialog = get("smart-fill-preview");
+  const smartFillPreviewList = get("smart-fill-preview-list");
+  const smartFillPreviewSummary = get("smart-fill-preview-summary");
+  const smartFillCancel = get("smart-fill-cancel");
+  const smartFillApply = get("smart-fill-apply");
+  const smartFillBack = get("smart-fill-back");
+  const smartFillTitle = get("smart-fill-preview-title");
   let records = [];
+  let pendingSmartFill = [];
+  let smartFillTracks = [];
+  let smartFillStage = "candidates";
+  let smartFillLoading = false;
   const say = (message) => { status.textContent = message; };
   const getSelected = () => records.filter((record) => selected.has(record.id));
 
@@ -272,36 +289,416 @@ export function initializeEdit({ onPreview } = {}) {
     render();
   }
 
+  function displayMetadataValue(key, value) {
+    if (key === "duration") return Number.isFinite(Number(value)) ? formatDuration(Number(value)) : "Not set";
+    return String(value ?? "").trim() || "Not set";
+  }
+
+  function makeArtworkPreview(label, source) {
+    const figure = document.createElement("figure");
+    figure.className = "smart-fill-preview-artwork-item";
+    const caption = document.createElement("figcaption");
+    caption.textContent = label;
+    figure.append(caption);
+    if (source) {
+      const image = document.createElement("img");
+      image.src = source;
+      image.alt = `${label} artwork`;
+      image.loading = "lazy";
+      image.referrerPolicy = "no-referrer";
+      image.addEventListener("error", () => {
+        const unavailable = document.createElement("span");
+        unavailable.textContent = "Preview unavailable";
+        image.replaceWith(unavailable);
+      }, { once: true });
+      figure.append(image);
+    } else {
+      const empty = document.createElement("span");
+      empty.textContent = "No artwork";
+      figure.append(empty);
+    }
+    return figure;
+  }
+
+  function makeSmartFillPreviewCard({ record, updates, candidate }) {
+    const card = document.createElement("article");
+    card.className = "smart-fill-preview-card";
+    const heading = document.createElement("h3");
+    heading.textContent = record.title || titleFromName(record.name);
+    const match = document.createElement("p");
+    match.className = "muted smart-fill-match-summary";
+    match.textContent = `${candidate.title}${candidate.artist ? ` · ${candidate.artist}` : ""} · ${candidate.source === "Fingerprint" ? `AcoustID match ${(candidate.score * 100).toFixed(1)}%` : "Title search match"}`;
+    card.append(heading, match);
+
+    const fieldsToPreview = [
+      ["title", "Title", record.title || titleFromName(record.name)],
+      ["artist", "Artist", record.artist],
+      ["album", "Album", record.album],
+      ["year", "Year", record.year],
+      ["duration", "Duration", record.duration],
+    ];
+    const changes = document.createElement("dl");
+    changes.className = "smart-fill-preview-changes";
+    for (const [key, label, currentValue] of fieldsToPreview) {
+      if (!(key in updates)) continue;
+      const row = document.createElement("div");
+      row.className = "smart-fill-preview-change";
+      const name = document.createElement("dt");
+      name.textContent = label;
+      const current = document.createElement("dd");
+      current.textContent = displayMetadataValue(key, currentValue);
+      const arrow = document.createElement("span");
+      arrow.className = "smart-fill-preview-arrow";
+      arrow.setAttribute("aria-hidden", "true");
+      arrow.textContent = "→";
+      const proposed = document.createElement("dd");
+      proposed.className = "smart-fill-preview-proposed";
+      proposed.textContent = displayMetadataValue(key, updates[key]);
+      row.append(name, current, arrow, proposed);
+      changes.append(row);
+    }
+    card.append(changes);
+
+    if ("artwork" in updates) {
+      const artwork = document.createElement("div");
+      artwork.className = "smart-fill-preview-artwork";
+      artwork.append(
+        makeArtworkPreview("Current artwork", record.artwork),
+        makeArtworkPreview("Suggested artwork", updates.artwork),
+      );
+      card.append(artwork);
+    }
+    return card;
+  }
+
+  function artistCredit(credits = []) {
+    return credits.map((credit) => `${credit.name || credit.artist?.name || ""}${credit.joinphrase || ""}`).join("").trim();
+  }
+
+  function rankCandidates(candidates, duration) {
+    return candidates.sort((a, b) => {
+      const scoreDifference = (b.score || 0) - (a.score || 0);
+      if (Math.abs(scoreDifference) > 0.0001) return scoreDifference;
+      const aDelta = Number.isFinite(a.duration) ? Math.abs(a.duration - duration) : Infinity;
+      const bDelta = Number.isFinite(b.duration) ? Math.abs(b.duration - duration) : Infinity;
+      return aDelta - bDelta;
+    }).slice(0, 6);
+  }
+
+  function acoustidCandidates(results, duration) {
+    const candidatesById = new Map();
+    for (const result of results) {
+      const score = Number(result.score) || 0;
+      for (const recording of result.recordings || []) {
+        if (!recording.id) continue;
+        const current = candidatesById.get(recording.id);
+        if (current && current.score >= score) continue;
+        const artist = (recording.artists || []).map((item) => item.name).filter(Boolean).join(", ");
+        const releaseGroup = recording.releasegroups?.[0];
+        candidatesById.set(recording.id, {
+          id: recording.id,
+          title: recording.title || "Untitled recording",
+          artist,
+          album: releaseGroup?.title || "",
+          duration: validDuration(recording.duration),
+          score,
+          source: "Fingerprint",
+        });
+      }
+    }
+    return rankCandidates([...candidatesById.values()], duration);
+  }
+
+  async function searchByTitle(record, duration) {
+    const title = record.title || titleFromName(record.name);
+    const phrase = (value) => `"${String(value).replace(/\\/g, "\\\\").replace(/"/g, "\\\"")}"`;
+    const primaryArtist = record.artist?.split(/[,;&/]|\b(?:feat\.?|ft\.?)\b/i)[0].trim();
+    const query = `recording:${phrase(title)}${primaryArtist ? ` AND artist:${phrase(primaryArtist)}` : ""}`;
+    const response = await fetch(`https://musicbrainz.org/ws/2/recording/?query=${encodeURIComponent(query)}&fmt=json&limit=8`, { headers: { Accept: "application/json" } });
+    if (!response.ok) throw new Error(`MusicBrainz returned ${response.status}.`);
+    const data = await response.json();
+    const candidates = (data.recordings || []).map((match) => ({
+      id: match.id,
+      title: match.title || title,
+      artist: artistCredit(match["artist-credit"]),
+      duration: validDuration(match.length) / 1000,
+      score: (Number(match.score) || 0) / 100,
+      source: "Title search",
+    })).filter((candidate) => candidate.id);
+    const lexicalCandidates = rankCandidates(candidates, duration);
+    try {
+      const rankingResponse = await fetch("/api/smart-fill/rank", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({
+          title: title.slice(0, 240),
+          artist: String(record.artist || "").slice(0, 240),
+          duration: Number.isFinite(duration) && duration > 0 ? duration : null,
+          candidates: lexicalCandidates.map((candidate) => ({
+            id: candidate.id,
+            title: candidate.title.slice(0, 240),
+            artist: candidate.artist.slice(0, 240),
+            duration: Number.isFinite(candidate.duration) && candidate.duration > 0 ? candidate.duration : null,
+            search_score: candidate.score,
+          })),
+        }),
+      });
+      if (!rankingResponse.ok) throw new Error(`Groq ranking returned ${rankingResponse.status}.`);
+      const ranking = await rankingResponse.json();
+      const byId = new Map(lexicalCandidates.map((candidate) => [candidate.id, candidate]));
+      const ordered = [];
+      for (const ranked of ranking.ranked_candidates || []) {
+        const candidate = byId.get(ranked.id);
+        if (!candidate) continue;
+        ordered.push({ ...candidate, aiScore: ranked.score, aiReason: ranked.reason });
+        byId.delete(ranked.id);
+      }
+      ordered.push(...byId.values());
+      const bestMatchId = ordered.some((candidate) => candidate.id === ranking.best_match_id)
+        ? ranking.best_match_id
+        : "";
+      return { candidates: ordered, bestMatchId, rankingAvailable: true };
+    } catch {
+      return { candidates: lexicalCandidates, bestMatchId: "", rankingAvailable: false };
+    }
+  }
+
+  function renderCandidateChoices() {
+    smartFillStage = "candidates";
+    pendingSmartFill = [];
+    smartFillTitle.textContent = "Choose the right recordings";
+    smartFillBack.hidden = true;
+    smartFillApply.disabled = false;
+    smartFillApply.textContent = "Review selected recordings";
+    const cards = smartFillTracks.map((track, index) => {
+      const card = document.createElement("section");
+      card.className = "smart-fill-candidate-track";
+      const heading = document.createElement("h3");
+      heading.textContent = track.record.title || titleFromName(track.record.name);
+      card.append(heading);
+      if (!track.candidates.length) {
+        const empty = document.createElement("p");
+        empty.className = "muted";
+        empty.textContent = "No recording candidates found.";
+        card.append(empty);
+        return card;
+      }
+      const options = document.createElement("div");
+      options.className = "smart-fill-candidate-options";
+      track.candidates.forEach((candidate, candidateIndex) => {
+        const label = document.createElement("label");
+        label.className = "smart-fill-candidate-option";
+        const radio = document.createElement("input");
+        radio.type = "radio";
+        radio.name = `smart-fill-track-${index}`;
+        radio.value = candidate.id;
+        radio.checked = candidate.id === track.selectedId;
+        if (radio.checked) track.selectedId = candidate.id;
+        radio.addEventListener("change", () => { track.selectedId = candidate.id; });
+        const info = document.createElement("span");
+        info.className = "smart-fill-candidate-info";
+        const title = document.createElement("strong");
+        title.textContent = candidate.title;
+        const details = document.createElement("small");
+        const scoreText = candidate.source === "Fingerprint"
+          ? `AcoustID match ${(candidate.score * 100).toFixed(1)}%`
+          : Number.isFinite(candidate.aiScore) ? `Groq match ${(candidate.aiScore * 100).toFixed(0)}%` : "AI ranking unavailable";
+        const candidateDuration = Number.isFinite(candidate.duration) ? formatDuration(candidate.duration) : "Duration unknown";
+        const delta = Number.isFinite(candidate.duration) && Number.isFinite(track.duration) ? ` · ${Math.round(Math.abs(candidate.duration - track.duration))} sec difference` : "";
+        const reason = candidate.aiReason ? ` · ${candidate.aiReason}` : "";
+        details.textContent = `${candidate.artist || "Artist unknown"} · ${candidateDuration}${delta} · ${scoreText}${reason}`;
+        info.append(title, details);
+        label.append(radio, info);
+        options.append(label);
+      });
+      card.append(options);
+      return card;
+    });
+    smartFillPreviewList.replaceChildren(...cards);
+    const found = smartFillTracks.filter((track) => track.candidates.length).length;
+    const usedFingerprint = smartFillTracks.some((track) => track.candidates[0]?.source === "Fingerprint");
+    const keyMissing = !getHomePreferences().acoustidClientKey;
+    const unrankedFallback = smartFillTracks.some((track) => track.candidates[0]?.source === "Title search" && !track.rankingAvailable);
+    const noConfidentFallback = smartFillTracks.some((track) => track.candidates[0]?.source === "Title search" && track.rankingAvailable && !track.selectedId);
+    smartFillPreviewSummary.textContent = `${found} of ${smartFillTracks.length} tracks have candidates. Choose one for each track you want to update before reviewing its metadata.${keyMissing ? " No AcoustID key is set, so Puffin used title search; Groq still ranks those candidates." : usedFingerprint ? " Audio was fingerprinted locally; only the fingerprint and duration were sent." : " No fingerprint matches were found, so these are title search results."}${unrankedFallback ? " Groq ranking is unavailable; no search result was preselected." : noConfidentFallback ? " Groq could not confirm a strong match; no search result was preselected." : ""}`;
+  }
+
   async function smartFill(targets) {
     if (!targets.length) { say("Select one or more songs first."); return; }
-    let found = 0;
-    for (let i = 0; i < targets.length; i += 1) {
-      const record = targets[i];
-      say(`Looking up ${record.title || titleFromName(record.name)}… (${i + 1}/${targets.length})`);
-      try {
+    if (smartFillLoading || smartFillDialog.open) { say("Finish reviewing the current Smart Fill suggestions first."); return; }
+    smartFillLoading = true;
+    smartFillTracks = [];
+    const acoustidKey = getHomePreferences().acoustidClientKey;
+    let failures = 0;
+    try {
+      for (let i = 0; i < targets.length; i += 1) {
+        const record = targets[i];
         const title = record.title || titleFromName(record.name);
-        const query = `recording:${title}`;
-        const response = await fetch(`https://musicbrainz.org/ws/2/recording/?query=${encodeURIComponent(query)}&fmt=json&limit=5`, { headers: { Accept: "application/json" } });
-        if (!response.ok) throw new Error(`MusicBrainz returned ${response.status}.`);
-        const data = await response.json();
-        const match = data.recordings?.[0];
-        if (!match) continue;
-        const release = match.releases?.[0];
-        const artist = match["artist-credit"]?.map((credit) => credit.name || credit.artist?.name).filter(Boolean).join(" ") || "";
-        const updates = { title: match.title || title, artist };
-        if (release?.title) updates.album = release.title;
-        if (release?.date) updates.year = release.date.slice(0, 4);
-        if (match.length) updates.duration = Math.round(match.length / 1000);
-        if (release?.id) updates.artwork = `https://coverartarchive.org/release/${release.id}/front-250`;
-        await updateMediaMetadata(record.id, updates); found += 1;
-      } catch (error) { recordPuffinActivity("failedJobs", 1, error.message || "Metadata lookup failed.").catch(() => {}); say(`Metadata lookup failed: ${error.message}`); }
-      if (i < targets.length - 1) await new Promise((resolve) => setTimeout(resolve, 1100));
+        say(`Identifying ${title}… (${i + 1}/${targets.length})`);
+        let duration = validDuration(record.duration);
+        let candidates = [];
+        let selectedId = "";
+        let rankingAvailable = false;
+        if (acoustidKey && record.kind !== "video") {
+          try {
+            const blob = await getMediaBlob(record.id);
+            if (!blob) throw new Error("The local media file is unavailable.");
+            const fingerprinted = await fingerprintAudioBlob(blob);
+            duration = fingerprinted.duration;
+            const results = await lookupAcoustID({ client: acoustidKey, ...fingerprinted });
+            candidates = acoustidCandidates(results, duration);
+            selectedId = candidates[0]?.id || "";
+            if (i < targets.length - 1) await new Promise((resolve) => setTimeout(resolve, 400));
+          } catch (error) {
+            recordPuffinActivity("failedJobs", 1, error.message || "Audio fingerprint lookup failed.").catch(() => {});
+          }
+        }
+        if (!candidates.length) {
+          say(`Searching by title for ${title}… (${i + 1}/${targets.length})`);
+          try {
+            const titleSearch = await searchByTitle(record, duration);
+            candidates = titleSearch.candidates;
+            selectedId = titleSearch.bestMatchId;
+            rankingAvailable = titleSearch.rankingAvailable;
+          } catch (error) {
+            failures += 1;
+            recordPuffinActivity("failedJobs", 1, error.message || "Metadata lookup failed.").catch(() => {});
+          }
+          if (i < targets.length - 1) await new Promise((resolve) => setTimeout(resolve, 1100));
+        }
+        smartFillTracks.push({ record, duration, candidates, selectedId, rankingAvailable });
+      }
+
+      const found = smartFillTracks.filter((track) => track.candidates.length).length;
+      if (!found) {
+        say(failures ? "Smart Fill couldn’t reach MusicBrainz. Try again later." : "Couldn’t find metadata for the selected songs.");
+        return;
+      }
+      renderCandidateChoices();
+      smartFillDialog.showModal();
+      say("Choose the matching recording for each track.");
+    } finally {
+      smartFillLoading = false;
     }
-    if (found) recordPuffinActivity("tagEdits", found).catch(() => {});
-    if (found && targets.length > 1) recordPuffinActivity("batchJobs").catch(() => {});
-    await load();
-    say(found ? `Smart Fill updated ${found} ${found === 1 ? "song" : "songs"}.` : "Couldn’t find metadata for the selected songs.");
   }
+
+  function metadataUpdates(recording, candidate) {
+    const release = recording.releases?.[0];
+    const artist = artistCredit(recording["artist-credit"]) || candidate.artist;
+    const updates = { title: recording.title || candidate.title };
+    if (artist) updates.artist = artist;
+    if (release?.title || candidate.album) updates.album = release?.title || candidate.album;
+    const date = release?.date || recording["first-release-date"];
+    if (date) updates.year = date.slice(0, 4);
+    const duration = Number(recording.length) / 1000;
+    if (Number.isFinite(duration) && duration > 0) updates.duration = Math.round(duration);
+    else if (Number.isFinite(candidate.duration)) updates.duration = Math.round(candidate.duration);
+    if (release?.id) updates.artwork = `https://coverartarchive.org/release/${release.id}/front-250`;
+    return updates;
+  }
+
+  async function loadMetadataPreviews() {
+    const selectedMatches = smartFillTracks.flatMap((track) => {
+      const candidate = track.candidates.find((item) => item.id === track.selectedId);
+      return candidate ? [{ record: track.record, candidate }] : [];
+    });
+    if (!selectedMatches.length) {
+      say("Choose at least one recording to review.");
+      return;
+    }
+    smartFillLoading = true;
+    smartFillApply.disabled = true;
+    smartFillCancel.disabled = true;
+    const suggestions = [];
+    let failures = 0;
+    try {
+      for (let i = 0; i < selectedMatches.length; i += 1) {
+        const { record, candidate } = selectedMatches[i];
+        say(`Loading metadata for ${candidate.title}… (${i + 1}/${selectedMatches.length})`);
+        try {
+          const response = await fetch(`https://musicbrainz.org/ws/2/recording/${encodeURIComponent(candidate.id)}?fmt=json&inc=releases`, { headers: { Accept: "application/json" } });
+          if (!response.ok) throw new Error(`MusicBrainz returned ${response.status}.`);
+          suggestions.push({ record, candidate, updates: metadataUpdates(await response.json(), candidate) });
+        } catch (error) {
+          failures += 1;
+          recordPuffinActivity("failedJobs", 1, error.message || "Could not load recording details.").catch(() => {});
+          if (candidate.title) suggestions.push({ record, candidate, updates: metadataUpdates({}, candidate) });
+        }
+        if (i < selectedMatches.length - 1) await new Promise((resolve) => setTimeout(resolve, 1100));
+      }
+      if (!suggestions.length) {
+        say("Could not load any selected recording metadata. Try again later.");
+        return;
+      }
+      pendingSmartFill = suggestions;
+      smartFillStage = "preview";
+      smartFillTitle.textContent = "Review metadata changes";
+      smartFillBack.hidden = false;
+      smartFillPreviewList.replaceChildren(...suggestions.map(makeSmartFillPreviewCard));
+      smartFillPreviewSummary.textContent = `${suggestions.length} selected ${suggestions.length === 1 ? "recording is" : "recordings are"} ready to preview${failures ? `; ${failures} used the matched candidate details because MusicBrainz could not be reached` : ""}. Nothing changes until you apply.`;
+      smartFillApply.disabled = false;
+      smartFillApply.textContent = `Yes, apply to ${suggestions.length} ${suggestions.length === 1 ? "track" : "tracks"}`;
+      say("Review the MusicBrainz metadata before applying it.");
+    } finally {
+      smartFillLoading = false;
+      smartFillApply.disabled = false;
+      smartFillCancel.disabled = false;
+    }
+  }
+
+  smartFillCancel.addEventListener("click", () => {
+    pendingSmartFill = [];
+    smartFillTracks = [];
+    smartFillDialog.close("cancel");
+    say("Smart Fill suggestions discarded.");
+  });
+  smartFillBack.addEventListener("click", renderCandidateChoices);
+  smartFillDialog.addEventListener("cancel", (event) => {
+    if (smartFillLoading) {
+      event.preventDefault();
+      return;
+    }
+    pendingSmartFill = [];
+    smartFillTracks = [];
+  });
+  smartFillDialog.addEventListener("close", () => {
+    smartFillPreviewList.replaceChildren();
+    smartFillApply.disabled = false;
+    smartFillCancel.disabled = false;
+    smartFillBack.hidden = true;
+    pendingSmartFill = [];
+    smartFillTracks = [];
+  });
+  smartFillApply.addEventListener("click", async () => {
+    if (smartFillStage === "candidates") {
+      await loadMetadataPreviews();
+      return;
+    }
+    if (!pendingSmartFill.length) return;
+    const suggestions = pendingSmartFill;
+    smartFillApply.disabled = true;
+    smartFillCancel.disabled = true;
+    let applied = 0;
+    let failures = 0;
+    for (const { record, updates } of suggestions) {
+      try {
+        await updateMediaMetadata(record.id, updates);
+        applied += 1;
+      } catch (error) {
+        failures += 1;
+        recordPuffinActivity("failedJobs", 1, error.message || "Metadata update failed.").catch(() => {});
+      }
+    }
+    pendingSmartFill = [];
+    smartFillDialog.close("apply");
+    smartFillCancel.disabled = false;
+    if (applied) recordPuffinActivity("tagEdits", applied).catch(() => {});
+    if (applied > 1) recordPuffinActivity("batchJobs").catch(() => {});
+    await load();
+    say(failures
+      ? `Applied ${applied} ${applied === 1 ? "suggestion" : "suggestions"}; ${failures} could not be saved.`
+      : `Applied Smart Fill to ${applied} ${applied === 1 ? "song" : "songs"}.`);
+  });
 
   get("edit-select-all").addEventListener("change", (event) => { selected.clear(); if (event.target.checked) records.forEach((record) => selected.add(record.id)); render(); });
   get("edit-smart-fill").addEventListener("click", () => smartFill(getSelected()));
