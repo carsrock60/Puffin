@@ -280,6 +280,8 @@ def _run_download(job_id: str) -> None:
             "bv[vcodec~='^(avc|h264)']+ba[acodec~='^(mp4a|aac)']/b[vcodec~='^(avc|h264)'][acodec~='^(mp4a|aac)']",
             "--merge-output-format",
             "mp4",
+            "--remux-video",
+            "mp4",
         ])
     command.append(job["url"])
 
