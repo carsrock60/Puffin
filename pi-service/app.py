@@ -164,6 +164,23 @@ def _ensure_supported_audio(path: Path, supported_formats: list[str], job: dict)
     return output_path
 
 
+def _ensure_video_output(path: Path) -> None:
+    if path.suffix.lower() != ".mp4":
+        raise DownloadFailure("The Pi did not produce an MP4 video. Choose a source with H.264 video and AAC audio, then retry.")
+
+    probe = subprocess.run(
+        [
+            "ffprobe", "-v", "error", "-select_streams", "v:0",
+            "-show_entries", "stream=codec_type", "-of", "csv=p=0", str(path),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    if probe.returncode != 0 or probe.stdout.strip() != "video":
+        raise DownloadFailure("The Pi download contains no video stream. Choose a video result and retry.")
+
+
 def _public_job(job: dict) -> dict:
     return {
         "id": job["id"],
@@ -184,7 +201,7 @@ def _search_youtube(query: str) -> list[dict]:
         "--dump-single-json",
         "--flat-playlist",
         "--skip-download",
-        "--quiet",
+        "--no-progress",
         "--no-warnings",
         f"ytsearch10:{query}",
     )
@@ -346,6 +363,8 @@ def _run_download(job_id: str) -> None:
         output_file = max(output_files, key=lambda path: path.stat().st_mtime)
         if job["kind"] == "audio":
             output_file = _ensure_supported_audio(output_file, job.get("supported_audio_formats") or [], job)
+        else:
+            _ensure_video_output(output_file)
         with JOBS_LOCK:
             current_job = JOBS.get(job_id)
             if not current_job:

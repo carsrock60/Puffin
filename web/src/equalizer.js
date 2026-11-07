@@ -100,8 +100,10 @@ export function initializeEqualizer({ audioPlayer, videoPlayer }) {
     if (!route) {
       const source = audioContext.createMediaElementSource(player);
       const analyser = audioContext.createAnalyser();
-      analyser.fftSize = 512;
-      analyser.smoothingTimeConstant = 0.78;
+      // A longer FFT resolves the kick and bass region; lighter analyser
+      // smoothing keeps transients visible to the beat-reactive visualizer.
+      analyser.fftSize = 2048;
+      analyser.smoothingTimeConstant = 0.24;
       source.connect(analyser);
       analyser.connect(audioContext.destination);
       route = { player, source, analyser, filters: null, preamp: null };

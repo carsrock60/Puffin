@@ -503,6 +503,9 @@ export function initializeDownloader() {
         : "Enter a YouTube link or a search phrase.");
       return;
     }
+    // Keep the user's format choice stable while the asynchronous download,
+    // polling, and transfer steps run.
+    const requestedKind = downloadKind.value;
     submitButton.disabled = true;
     cancelButton.hidden = false;
     cancelButton.disabled = false;
@@ -534,8 +537,8 @@ export function initializeDownloader() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           url: downloadTarget,
-          kind: downloadKind.value,
-          supported_audio_formats: downloadKind.value === "audio" ? getSupportedAudioFormats() : [],
+          kind: requestedKind,
+          supported_audio_formats: requestedKind === "audio" ? getSupportedAudioFormats() : [],
         }),
       });
       jobId = job.id;
@@ -570,6 +573,12 @@ export function initializeDownloader() {
 
       if (currentJob.status !== "ready") {
         throw new Error(currentJob.error || "The Pi download did not finish.");
+      }
+      if (requestedKind === "video" && currentJob.kind !== "video") {
+        throw new Error("The Pi returned an audio job for a video request. Please retry the download.");
+      }
+      if (requestedKind === "video" && !currentJob.mime_type?.startsWith("video/")) {
+        throw new Error("The Pi did not produce a video file for this request.");
       }
 
       try {
@@ -606,7 +615,7 @@ export function initializeDownloader() {
       const mediaBlob = piMedia.blob;
       setStatus(status, "Saving to this device…");
       const encodedName = fileResponse.headers.get("X-Download-Name");
-      let filename = piMedia.name || `puffin-download.${downloadKind.value === "audio" ? "m4a" : "mp4"}`;
+      let filename = piMedia.name || `puffin-download.${requestedKind === "audio" ? "m4a" : "mp4"}`;
       if (encodedName) {
         try {
           filename = decodeURIComponent(encodedName);

@@ -47,6 +47,10 @@ let visualizerEnabled = false;
 let visualizerAnalyser = null;
 let visualizerData = null;
 let visualizerFrame = 0;
+let visualizerBeatPulse = 0;
+let visualizerPreviousBass = 0;
+let visualizerLastBeatAt = 0;
+let visualizerLastFrameAt = 0;
 let lyricsSyncFrame = 0;
 let equalizerController = null;
 let dragQueueId = null;
@@ -56,6 +60,7 @@ const visualizerBars = Array.from({ length: 24 }, () => {
   bar.setAttribute("aria-hidden", "true");
   return bar;
 });
+const visualizerLevels = Array(visualizerBars.length).fill(0.08);
 fullPlayerVisualizer.replaceChildren(...visualizerBars);
 
 function closeMobileSidebar({ restoreFocus = false } = {}) {
@@ -277,7 +282,23 @@ function startVisualizerLoop() {
       || playerFullscreen.hidden || activePlayer !== audioPlayer || audioPlayer.paused || audioPlayer.ended) return;
     visualizerAnalyser.getByteFrequencyData(visualizerData);
     const binWidth = visualizerAnalyser.context.sampleRate / visualizerAnalyser.fftSize;
-    const lowestFrequency = 45;
+    const now = performance.now();
+    const delta = visualizerLastFrameAt ? Math.min(50, now - visualizerLastFrameAt) : 16;
+    visualizerLastFrameAt = now;
+    visualizerBeatPulse *= Math.exp(-delta / 190);
+    const bassFirstBin = Math.max(1, Math.floor(45 / binWidth));
+    const bassLastBin = Math.min(visualizerData.length, Math.ceil(180 / binWidth));
+    let bassEnergy = 0;
+    for (let bin = bassFirstBin; bin < bassLastBin; bin += 1) bassEnergy += visualizerData[bin];
+    bassEnergy /= Math.max(1, bassLastBin - bassFirstBin) * 255;
+    const bassRise = bassEnergy - visualizerPreviousBass;
+    if (bassEnergy > 0.13 && bassRise > 0.025 && now - visualizerLastBeatAt > 170) {
+      visualizerBeatPulse = 1;
+      visualizerLastBeatAt = now;
+    }
+    visualizerPreviousBass += (bassEnergy - visualizerPreviousBass) * 0.45;
+
+    const lowestFrequency = 32;
     const highestFrequency = Math.min(12000, visualizerAnalyser.context.sampleRate / 2);
     visualizerBars.forEach((bar, index) => {
       const startFrequency = lowestFrequency * (highestFrequency / lowestFrequency) ** (index / visualizerBars.length);
@@ -285,10 +306,14 @@ function startVisualizerLoop() {
       const firstBin = Math.max(1, Math.floor(startFrequency / binWidth));
       const lastBin = Math.min(visualizerData.length, Math.max(firstBin + 1, Math.ceil(endFrequency / binWidth)));
       let energy = 0;
-      for (let bin = firstBin; bin < lastBin; bin += 1) energy += visualizerData[bin];
-      const average = energy / Math.max(1, lastBin - firstBin);
-      const level = Math.max(0.06, Math.min(1, (average / 255) ** 0.8 * 1.65));
-      bar.style.setProperty("--level", level.toFixed(2));
+      for (let bin = firstBin; bin < lastBin; bin += 1) energy += visualizerData[bin] ** 2;
+      const average = Math.sqrt(energy / Math.max(1, lastBin - firstBin)) / 255;
+      const spectralLevel = Math.min(1.12, Math.max(0, (average - 0.035) / 0.52) ** 0.72 * 1.55);
+      const bassAccent = index < 9 ? visualizerBeatPulse * (0.78 - index * 0.065) : visualizerBeatPulse * 0.08;
+      const target = Math.max(0.08, Math.min(1.25, spectralLevel + bassAccent));
+      const current = visualizerLevels[index];
+      visualizerLevels[index] = current + (target - current) * (target > current ? 0.72 : 0.16);
+      bar.style.setProperty("--level", visualizerLevels[index].toFixed(2));
     });
     visualizerFrame = requestAnimationFrame(draw);
   };
@@ -303,7 +328,11 @@ function setVisualizerEnabled(enabled) {
   if (enabled) startVisualizerLoop();
   else {
     stopVisualizerLoop();
-    visualizerBars.forEach((bar) => bar.style.setProperty("--level", ".06"));
+    visualizerBeatPulse = 0;
+    visualizerPreviousBass = 0;
+    visualizerLastFrameAt = 0;
+    visualizerLevels.fill(0.08);
+    visualizerBars.forEach((bar) => bar.style.setProperty("--level", ".08"));
   }
 }
 
