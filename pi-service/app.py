@@ -101,7 +101,7 @@ def _yt_dlp_failure_message(lines: list[str], return_code: int) -> str:
     if "no module named yt_dlp" in lowered:
         return "yt-dlp is missing from the service virtual environment. Run pip install -r requirements.txt and restart the Pi service."
     if "requested format is not available" in lowered:
-        return "This video does not offer an H.264 video stream with AAC audio."
+        return "This video does not offer H.264 video with AAC audio. Puffin will not re-encode it on the Pi; choose another video."
     if any(term in lowered for term in ("javascript runtime", "javascript challenge", "yt-dlp-ejs", "[jsc]")):
         return "YouTube could not run its JavaScript challenge solver. Install Deno and update the Pi service requirements, then restart the service."
     if "http error 429" in lowered or "too many requests" in lowered:
@@ -199,11 +199,16 @@ def _make_compatible_mp4(path: Path, job: dict, separate_audio: Path | None = No
     audio = next((stream for stream in audio_streams if stream.get("codec_type") == "audio"), None)
     if not video or not audio:
         raise DownloadFailure("The downloaded source is missing its video or audio stream.")
+    if video.get("codec_name") != "h264" or audio.get("codec_name") != "aac":
+        raise DownloadFailure(
+            "This video is not available as H.264 video with AAC audio. Puffin will not re-encode it on the Pi; choose another video."
+        )
 
     output_path = path.with_suffix(".mp4")
     temporary_path = path.with_name(f"{path.stem}.puffin-converting.mp4")
-    video_codec_args = ["-c:v", "copy"] if video.get("codec_name") == "h264" else ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23"]
-    audio_codec_args = ["-c:a", "copy"] if audio.get("codec_name") == "aac" else ["-c:a", "aac", "-b:a", "192k"]
+    if not separate_audio and path.suffix.lower() == ".mp4":
+        return path
+
     audio_input_index = 0
     ffmpeg_args = [_system_tool("ffmpeg"), "-nostdin", "-y", "-i", str(path)]
     if separate_audio and separate_audio != path:
@@ -211,7 +216,7 @@ def _make_compatible_mp4(path: Path, job: dict, separate_audio: Path | None = No
         audio_input_index = 1
     ffmpeg_args.extend([
             "-map", "0:v:0", "-map", f"{audio_input_index}:a:0",
-            *video_codec_args, *audio_codec_args,
+            "-c:v", "copy", "-c:a", "copy",
             "-movflags", "+faststart", str(temporary_path),
         ])
 
@@ -236,6 +241,15 @@ def _make_compatible_mp4(path: Path, job: dict, separate_audio: Path | None = No
     if not _has_audio_and_video_streams(output_path):
         raise DownloadFailure("The converted MP4 is missing its video or audio stream.")
     return output_path
+
+
+def _video_format_options() -> list[str]:
+    return [
+        "--format",
+        "bv[vcodec~='^(avc1|h264)']+ba[acodec~='^(mp4a|aac)']/b[vcodec~='^(avc1|h264)'][acodec~='^(mp4a|aac)']",
+        "--merge-output-format",
+        "mp4",
+    ]
 
 
 def _public_job(job: dict) -> dict:
@@ -332,12 +346,7 @@ def _run_download(job_id: str) -> None:
             "bestaudio",
         ])
     else:
-        command.extend([
-            "--format",
-            "bestvideo+bestaudio/best",
-            "--merge-output-format",
-            "mkv",
-        ])
+        command.extend(_video_format_options())
     command.append(job["url"])
 
     process = None
