@@ -58,6 +58,11 @@ class DownloadFailure(Exception):
     """A download or conversion failed for a known, user-actionable reason."""
 
 
+def _system_tool(name: str) -> str:
+    """Resolve Pi system tools even when systemd has a restricted PATH."""
+    return shutil.which(name) or str(Path("/usr/bin") / name)
+
+
 def _yt_dlp_command(*arguments: str) -> list[str]:
     # Use the exact interpreter running this service. systemd does not
     # activate the virtual environment's bin directory in PATH.
@@ -143,7 +148,7 @@ def _ensure_supported_audio(path: Path, supported_formats: list[str], job: dict)
         job["progress"] = 99
         job["updated_at"] = time.time()
 
-    common_args = ["ffmpeg", "-nostdin", "-y", "-i", str(path), "-vn"]
+    common_args = [_system_tool("ffmpeg"), "-nostdin", "-y", "-i", str(path), "-vn"]
     copied = subprocess.run(
         [*common_args, "-c:a", "copy", "-movflags", "+faststart", str(output_path)],
         capture_output=True,
@@ -169,7 +174,7 @@ def _has_video_stream(path: Path) -> bool:
         return False
     probe = subprocess.run(
         [
-            "ffprobe", "-v", "error", "-select_streams", "v:0",
+            _system_tool("ffprobe"), "-v", "error", "-select_streams", "v:0",
             "-show_entries", "stream=codec_type", "-of", "csv=p=0", str(path),
         ],
         capture_output=True,
@@ -413,7 +418,8 @@ def _run_download(job_id: str) -> None:
     except FileNotFoundError as error:
         if process and process.poll() is None:
             _terminate_process_group(process)
-        message = "A required Pi tool or media file is missing. Check that Deno and ffmpeg are installed and retry."
+        missing = Path(error.filename).name if error.filename else "a required file"
+        message = f"The Pi could not run {missing}. Check the service PATH and installed tools, then retry."
         _fail_job(job_id, message)
         LOGGER.warning("Download job %s failed (%s): %s", job_id, type(error).__name__, message)
     except Exception as error:
