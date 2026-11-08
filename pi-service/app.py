@@ -164,10 +164,9 @@ def _ensure_supported_audio(path: Path, supported_formats: list[str], job: dict)
     return output_path
 
 
-def _ensure_video_output(path: Path) -> None:
+def _has_video_stream(path: Path) -> bool:
     if path.suffix.lower() != ".mp4":
-        raise DownloadFailure("The Pi did not produce an MP4 video. Choose a source with H.264 video and AAC audio, then retry.")
-
+        return False
     probe = subprocess.run(
         [
             "ffprobe", "-v", "error", "-select_streams", "v:0",
@@ -177,8 +176,7 @@ def _ensure_video_output(path: Path) -> None:
         text=True,
         timeout=20,
     )
-    if probe.returncode != 0 or probe.stdout.strip() != "video":
-        raise DownloadFailure("The Pi download contains no video stream. Choose a video result and retry.")
+    return probe.returncode == 0 and probe.stdout.strip() == "video"
 
 
 def _public_job(job: dict) -> dict:
@@ -282,15 +280,12 @@ def _run_download(job_id: str) -> None:
             "mp4",
             "--remux-video",
             "mp4",
-            "--print",
-            "after_move:PUFFIN_FINAL_FILE:%(filepath)s",
         ])
     command.append(job["url"])
 
     process = None
     compatible_format_missing = False
     output_tail = []
-    final_video_path = None
     try:
         process = subprocess.Popen(
             command,
@@ -311,8 +306,6 @@ def _run_download(job_id: str) -> None:
                 _signal_process_group(process)
 
         for line in process.stdout or []:
-            if line.startswith("PUFFIN_FINAL_FILE:"):
-                final_video_path = line[len("PUFFIN_FINAL_FILE:"):].strip()
             output_tail.append(line.strip())
             if len(output_tail) > 40:
                 del output_tail[0]
@@ -371,12 +364,14 @@ def _run_download(job_id: str) -> None:
             output_file = max(output_files, key=lambda path: path.stat().st_mtime)
             output_file = _ensure_supported_audio(output_file, job.get("supported_audio_formats") or [], job)
         else:
-            if not final_video_path:
-                raise DownloadFailure("yt-dlp did not report the finished video file. Update yt-dlp and retry.")
-            output_file = Path(final_video_path).resolve()
-            if output_file.parent != work_dir.resolve() or not output_file.is_file():
-                raise DownloadFailure("yt-dlp reported a finished video file that could not be found.")
-            _ensure_video_output(output_file)
+            video_files = sorted(
+                (path for path in output_files if path.suffix.lower() == ".mp4"),
+                key=lambda path: path.stat().st_mtime,
+                reverse=True,
+            )
+            output_file = next((path for path in video_files if _has_video_stream(path)), None)
+            if output_file is None:
+                raise DownloadFailure("yt-dlp finished but did not leave an MP4 file containing a video stream.")
         with JOBS_LOCK:
             current_job = JOBS.get(job_id)
             if not current_job:
