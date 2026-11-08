@@ -169,19 +169,20 @@ def _ensure_supported_audio(path: Path, supported_formats: list[str], job: dict)
     return output_path
 
 
-def _has_video_stream(path: Path) -> bool:
+def _has_audio_and_video_streams(path: Path) -> bool:
     if path.suffix.lower() != ".mp4":
         return False
     probe = subprocess.run(
         [
-            _system_tool("ffprobe"), "-v", "error", "-select_streams", "v:0",
+            _system_tool("ffprobe"), "-v", "error",
             "-show_entries", "stream=codec_type", "-of", "csv=p=0", str(path),
         ],
         capture_output=True,
         text=True,
         timeout=20,
     )
-    return probe.returncode == 0 and probe.stdout.strip() == "video"
+    stream_types = set(probe.stdout.splitlines()) if probe.returncode == 0 else set()
+    return {"video", "audio"}.issubset(stream_types)
 
 
 def _public_job(job: dict) -> dict:
@@ -374,9 +375,9 @@ def _run_download(job_id: str) -> None:
                 key=lambda path: path.stat().st_mtime,
                 reverse=True,
             )
-            output_file = next((path for path in video_files if _has_video_stream(path)), None)
+            output_file = next((path for path in video_files if _has_audio_and_video_streams(path)), None)
             if output_file is None:
-                raise DownloadFailure("yt-dlp finished but did not leave an MP4 file containing a video stream.")
+                raise DownloadFailure("yt-dlp did not leave an MP4 containing both video and audio streams.")
         with JOBS_LOCK:
             current_job = JOBS.get(job_id)
             if not current_job:
