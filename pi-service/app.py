@@ -169,20 +169,69 @@ def _ensure_supported_audio(path: Path, supported_formats: list[str], job: dict)
     return output_path
 
 
-def _has_audio_and_video_streams(path: Path) -> bool:
-    if path.suffix.lower() != ".mp4":
-        return False
+def _media_streams(path: Path) -> list[dict]:
     probe = subprocess.run(
         [
             _system_tool("ffprobe"), "-v", "error",
-            "-show_entries", "stream=codec_type", "-of", "csv=p=0", str(path),
+            "-show_entries", "stream=codec_type,codec_name", "-of", "json", str(path),
         ],
         capture_output=True,
         text=True,
         timeout=20,
     )
-    stream_types = set(probe.stdout.splitlines()) if probe.returncode == 0 else set()
-    return {"video", "audio"}.issubset(stream_types)
+    if probe.returncode != 0:
+        return []
+    try:
+        return json.loads(probe.stdout).get("streams") or []
+    except (json.JSONDecodeError, AttributeError):
+        return []
+
+
+def _has_audio_and_video_streams(path: Path) -> bool:
+    kinds = {stream.get("codec_type") for stream in _media_streams(path)}
+    return {"video", "audio"}.issubset(kinds)
+
+
+def _make_compatible_mp4(path: Path, job: dict) -> Path:
+    streams = _media_streams(path)
+    video = next((stream for stream in streams if stream.get("codec_type") == "video"), None)
+    audio = next((stream for stream in streams if stream.get("codec_type") == "audio"), None)
+    if not video or not audio:
+        raise DownloadFailure("The downloaded source is missing its video or audio stream.")
+
+    output_path = path.with_suffix(".mp4")
+    temporary_path = path.with_name(f"{path.stem}.puffin-converting.mp4")
+    video_codec_args = ["-c:v", "copy"] if video.get("codec_name") == "h264" else ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23"]
+    audio_codec_args = ["-c:a", "copy"] if audio.get("codec_name") == "aac" else ["-c:a", "aac", "-b:a", "192k"]
+
+    with JOBS_LOCK:
+        job["status"] = "converting"
+        job["progress"] = 99
+        job["updated_at"] = time.time()
+    conversion = subprocess.run(
+        [
+            _system_tool("ffmpeg"), "-nostdin", "-y", "-i", str(path),
+            "-map", "0:v:0", "-map", "0:a:0",
+            *video_codec_args, *audio_codec_args,
+            "-movflags", "+faststart", str(temporary_path),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if conversion.returncode != 0 or not temporary_path.is_file():
+        temporary_path.unlink(missing_ok=True)
+        detail = (conversion.stderr or "").strip().splitlines()
+        summary = _safe_diagnostic(detail[-1]) if detail else "ffmpeg returned an error"
+        raise DownloadFailure(f"Could not create the MP4 with video and audio: {summary}")
+
+    if output_path == path:
+        temporary_path.replace(path)
+    else:
+        path.unlink(missing_ok=True)
+        temporary_path.replace(output_path)
+    if not _has_audio_and_video_streams(output_path):
+        raise DownloadFailure("The converted MP4 is missing its video or audio stream.")
+    return output_path
 
 
 def _public_job(job: dict) -> dict:
@@ -281,11 +330,9 @@ def _run_download(job_id: str) -> None:
     else:
         command.extend([
             "--format",
-            "bv[vcodec~='^(avc|h264)']+ba[acodec~='^(mp4a|aac)']/b[vcodec~='^(avc|h264)'][acodec~='^(mp4a|aac)']",
+            "bestvideo+bestaudio/best",
             "--merge-output-format",
-            "mp4",
-            "--remux-video",
-            "mp4",
+            "mkv",
         ])
     command.append(job["url"])
 
@@ -371,13 +418,14 @@ def _run_download(job_id: str) -> None:
             output_file = _ensure_supported_audio(output_file, job.get("supported_audio_formats") or [], job)
         else:
             video_files = sorted(
-                (path for path in output_files if path.suffix.lower() == ".mp4"),
+                output_files,
                 key=lambda path: path.stat().st_mtime,
                 reverse=True,
             )
             output_file = next((path for path in video_files if _has_audio_and_video_streams(path)), None)
             if output_file is None:
-                raise DownloadFailure("yt-dlp did not leave an MP4 containing both video and audio streams.")
+                raise DownloadFailure("yt-dlp did not leave a file containing both video and audio streams.")
+            output_file = _make_compatible_mp4(output_file, current_job or job)
         with JOBS_LOCK:
             current_job = JOBS.get(job_id)
             if not current_job:
