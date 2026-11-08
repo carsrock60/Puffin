@@ -282,12 +282,15 @@ def _run_download(job_id: str) -> None:
             "mp4",
             "--remux-video",
             "mp4",
+            "--print",
+            "after_move:PUFFIN_FINAL_FILE:%(filepath)s",
         ])
     command.append(job["url"])
 
     process = None
     compatible_format_missing = False
     output_tail = []
+    final_video_path = None
     try:
         process = subprocess.Popen(
             command,
@@ -308,6 +311,8 @@ def _run_download(job_id: str) -> None:
                 _signal_process_group(process)
 
         for line in process.stdout or []:
+            if line.startswith("PUFFIN_FINAL_FILE:"):
+                final_video_path = line[len("PUFFIN_FINAL_FILE:"):].strip()
             output_tail.append(line.strip())
             if len(output_tail) > 40:
                 del output_tail[0]
@@ -362,10 +367,15 @@ def _run_download(job_id: str) -> None:
         if not output_files:
             raise DownloadFailure("yt-dlp finished but did not create a media file. Check the Pi service logs for details.")
 
-        output_file = max(output_files, key=lambda path: path.stat().st_mtime)
         if job["kind"] == "audio":
+            output_file = max(output_files, key=lambda path: path.stat().st_mtime)
             output_file = _ensure_supported_audio(output_file, job.get("supported_audio_formats") or [], job)
         else:
+            if not final_video_path:
+                raise DownloadFailure("yt-dlp did not report the finished video file. Update yt-dlp and retry.")
+            output_file = Path(final_video_path).resolve()
+            if output_file.parent != work_dir.resolve() or not output_file.is_file():
+                raise DownloadFailure("yt-dlp reported a finished video file that could not be found.")
             _ensure_video_output(output_file)
         with JOBS_LOCK:
             current_job = JOBS.get(job_id)
