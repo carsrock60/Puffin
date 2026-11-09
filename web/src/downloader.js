@@ -162,6 +162,18 @@ function filenameFromResponse(response, sourceUrl, mimeType) {
   return (name || "puffin-download").replace(/[\\/:*?"<>|\r\n]/g, "_").slice(0, 180);
 }
 
+function removeLastBracketedPart(filename) {
+  const extensionMatch = filename.match(/(\.[a-z0-9]{2,5})$/i);
+  const extension = extensionMatch?.[1] || "";
+  const name = extension ? filename.slice(0, -extension.length) : filename;
+  const open = name.lastIndexOf("[");
+  const close = name.lastIndexOf("]");
+  if (open < 0 || close <= open) return filename;
+
+  const cleaned = `${name.slice(0, open)}${name.slice(close + 1)}`.replace(/\s+/g, " ").trim();
+  return `${cleaned || "Puffin download"}${extension}`;
+}
+
 async function readDirectMedia(response, sourceUrl, capacity, onProgress) {
   const mimeType = (response.headers.get("Content-Type") || "").split(";")[0].trim().toLowerCase();
   const name = filenameFromResponse(response, sourceUrl, mimeType);
@@ -625,6 +637,7 @@ export function initializeDownloader() {
       } else if (currentJob.filename) {
         filename = currentJob.filename;
       }
+      filename = removeLastBracketedPart(filename);
 
       try {
         if (navigator.storage?.persist) await navigator.storage.persist();
