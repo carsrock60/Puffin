@@ -58,9 +58,15 @@ export function initializeListen({ onPlay }) {
     if (latest) {
       const hero = document.createElement("article");
       hero.className = "watch-featured-card listen-featured-card";
-      const art = artworkFor(latest, "watch-featured-art");
+      const artLayer = document.createElement("div");
+      artLayer.className = "listen-featured-art-layer";
+      artLayer.setAttribute("aria-hidden", "true");
+      artLayer.append(artworkFor(latest, "listen-featured-backdrop"));
+      const art = document.createElement("div");
+      art.className = "listen-featured-artwork";
+      art.append(artworkFor(latest, "listen-featured-image"));
       const copy = document.createElement("div");
-      copy.className = "watch-featured-copy";
+      copy.className = "watch-featured-copy listen-featured-copy";
       const eyebrow = document.createElement("p");
       eyebrow.className = "watch-eyebrow";
       eyebrow.textContent = recentSongs.length ? "PICK UP THE MUSIC" : "YOUR MUSIC LIBRARY";
@@ -75,7 +81,7 @@ export function initializeListen({ onPlay }) {
       play.textContent = "Play";
       play.addEventListener("click", () => onPlay(latest));
       copy.append(eyebrow, heading, byline, play);
-      hero.append(art, copy);
+      hero.append(artLayer, art, copy);
       featured.append(hero);
     }
     const query = search.value.toLocaleLowerCase().trim();

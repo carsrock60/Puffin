@@ -221,8 +221,13 @@ main {
 .watch-featured-empty { display: grid; min-height: 290px; grid-template-columns: 1fr minmax(180px, .72fr); align-items: center; gap: 24px; padding: clamp(24px, 5vw, 56px); overflow: hidden; border: 1px solid var(--border); border-radius: 28px; background: radial-gradient(ellipse at 90% 15%, #7199a531, transparent 42%), var(--surface); }
 .listen-art-button { aspect-ratio: 16 / 9; }
 .listen-artwork { width: 100%; height: 100%; object-fit: cover; background: var(--accent-soft); }
-.listen-featured-card .watch-featured-art { background-size: cover; background-position: center; }
-.listen-featured-card .watch-featured-art img { object-fit: cover; }
+.listen-featured-card { min-height: clamp(280px, 32vw, 420px); grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); align-items: center; gap: clamp(20px, 4vw, 48px); padding: clamp(24px, 4vw, 48px); }
+.listen-featured-card::after { z-index: 1; background: linear-gradient(90deg, #0c1215a8, #0c1215d9 38%, #0c1215ed 100%), linear-gradient(0deg, #0c1215a8, transparent 62%); }
+.listen-featured-art-layer { position: absolute; z-index: 0; inset: 0; overflow: hidden; background: #111820; }
+.listen-featured-backdrop { position: absolute; inset: -24px; width: calc(100% + 48px); height: calc(100% + 48px); object-fit: cover; filter: blur(24px); transform: scale(1.08); }
+.listen-featured-artwork { position: relative; z-index: 2; width: min(100%, 320px); aspect-ratio: 1; justify-self: center; overflow: hidden; }
+.listen-featured-image { display: block; width: 100%; height: 100%; object-fit: contain; }
+.listen-featured-copy { position: relative; z-index: 2; grid-column: 2; align-self: center; min-width: 0; padding: 0; overflow-wrap: anywhere; }
 .watch-featured-empty h2 { margin: 0 0 8px; font-size: clamp(1.7rem, 3vw, 2.4rem); letter-spacing: -.05em; }
 .watch-featured-empty p:not(.watch-eyebrow) { margin: 0 0 20px; color: var(--muted); }
 .watch-featured-art-empty { position: relative; display: grid; min-height: 180px; place-items: center; border-radius: 22px; }
@@ -983,7 +988,9 @@ body.dark .media-action.danger:hover { background: #48282b; }
   .music-pick-download { padding-inline: 10px; font-size: .78rem; line-height: 1.2; white-space: normal; }
   .watch-page-heading { margin-bottom: 20px; }
   .watch-featured-card { min-height: 340px; border-radius: 22px; }
+  .listen-featured-card { min-height: 320px; padding: 22px; }
   .watch-featured-copy { padding: 22px; }
+  .listen-featured-copy { padding: 0; }
   .watch-featured-copy h2 { font-size: clamp(1.8rem, 8vw, 2.8rem); }
   .watch-featured-empty { min-height: 0; grid-template-columns: 1fr; gap: 18px; padding: 22px; border-radius: 22px; }
   .watch-featured-art-empty { min-height: 120px; }
@@ -1106,6 +1113,9 @@ body.dark .media-action.danger:hover { background: #48282b; }
   .nav-button { font-size: .96rem; }
 }
 @media (max-width: 560px) {
+  .listen-featured-card { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+  .listen-featured-artwork { width: min(100%, 210px); }
+  .listen-featured-copy { grid-column: 1; }
   .smart-fill-preview-content { gap: 12px; padding: 18px; }
   .smart-fill-preview-change { grid-template-columns: minmax(0,1fr) 22px minmax(0,1fr); gap: 6px; }
   .smart-fill-preview-change dt { grid-column: 1 / -1; }
