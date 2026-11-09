@@ -183,8 +183,13 @@
                 </div>
                 <ol id="youtube-search-results" class="youtube-search-results" aria-label="YouTube search results"></ol>
               </section>
+              <button class="primary-button" id="start-download" type="submit">Download to Puffin</button>
+              <button class="secondary-button" id="cancel-download" type="button" hidden>Cancel download</button>
+              <progress id="download-progress" max="100" value="0" hidden></progress>
+              <p id="download-transfer-details" class="download-transfer-details" hidden></p>
+              <p id="download-status" class="muted" role="status" aria-live="polite">Downloads run through your Raspberry Pi. Enter a YouTube link or search phrase, or browse YouTube.</p>
               <section class="csv-download-section" aria-labelledby="csv-download-title">
-                <h2 id="csv-download-title">Download from CSV</h2>
+                <h2 id="csv-download-title">Bulk download from CSV</h2>
                 <p class="muted">Choose a CSV with columns Track Name, Artist Name, and Album. Download all data rows or specify data row numbers (header excluded), such as 1,3-5.</p>
                 <label class="form-field" for="download-csv-file"><span>CSV file</span>
                   <input id="download-csv-file" type="file" accept=".csv,text/csv" />
@@ -196,13 +201,8 @@
                   <button id="download-csv-prepare" class="secondary-button" type="button">Load CSV</button>
                 </div>
                 <p id="download-csv-status" class="muted" role="status" aria-live="polite">No CSV loaded.</p>
-                <button id="download-csv-start" class="primary-button" type="button" disabled>Download selected rows</button>
+                <button id="download-csv-start" class="secondary-button" type="button" disabled>Download selected rows</button>
               </section>
-              <button class="primary-button" id="start-download" type="submit">Download to Puffin</button>
-              <button class="secondary-button" id="cancel-download" type="button" hidden>Cancel download</button>
-              <progress id="download-progress" max="100" value="0" hidden></progress>
-              <p id="download-transfer-details" class="download-transfer-details" hidden></p>
-              <p id="download-status" class="muted" role="status" aria-live="polite">Downloads run through your Raspberry Pi. Enter a YouTube link or search phrase, or browse YouTube.</p>
             </form>
           </section>
 
@@ -214,6 +214,7 @@
               <button id="edit-smart-fill" class="secondary-button" type="button">Smart Fill</button>
             </div>
             <section class="edit-batch-card" aria-label="Batch metadata editing">
+              <h2 class="edit-section-title">Bulk metadata</h2>
               <div class="edit-fields">
                 <label class="form-field"><span>Artist</span><input id="batch-artist" type="text" placeholder="Artist" /></label>
                 <label class="form-field"><span>Album</span><input id="batch-album" type="text" placeholder="Album" /></label>
@@ -223,6 +224,7 @@
                 <button id="batch-artwork-button" class="secondary-button" type="button">Set artwork for selected</button>
                 <input id="batch-artwork-file" type="file" accept="image/*" hidden />
               </div>
+              <h2 class="edit-section-title edit-filename-heading">Filename and tags</h2>
               <div class="edit-mask-row">
                 <label class="form-field"><span>Naming mask</span><input id="edit-mask" type="text" value="{artist} - {title}" /></label>
                 <button id="filename-to-tags" class="secondary-button" type="button">Filename → tags</button>
@@ -231,6 +233,9 @@
               <p class="edit-mask-help muted">Masks: {artist}, {title}, {album}, {track}, {year}. File extensions are kept automatically.</p>
             </section>
             <p id="edit-status" class="muted" role="status" aria-live="polite"></p>
+            <div class="edit-column-headings" aria-hidden="true">
+              <span></span><span></span><div class="edit-column-fields"><span>Title</span><span>Artist</span><span>Album</span></div><span>Type</span><span>Actions</span><span></span>
+            </div>
             <ol id="edit-media-list" class="edit-media-list" aria-label="Editable media"></ol>
           </section>
 

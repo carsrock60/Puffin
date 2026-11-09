@@ -331,7 +331,7 @@ main {
 .storage-summary { margin: 18px 0; font-size: 0.9rem; }
 .library-heading { margin: 28px 0 12px; font-size: 1.1rem; }
 
-.download-form { display: grid; gap: 18px; max-width: 620px; margin-top: 24px; }
+.download-form { display: grid; gap: 18px; max-width: 760px; margin-top: 24px; }
 .download-link-row { display: grid; grid-template-columns: minmax(0, 1fr) 170px; align-items: end; gap: 12px; }
 .download-source-switch { display: inline-flex; width: max-content; max-width: 100%; padding: 4px; background: var(--page); border: 1px solid var(--border); border-radius: 999px; }
 .download-source-switch button { min-height: 38px; padding: 0 16px; color: var(--muted); background: transparent; border: 0; border-radius: 999px; cursor: pointer; font: inherit; font-size: 0.88rem; font-weight: 600; }
@@ -358,12 +358,15 @@ main {
 .youtube-result-formats { display: flex; gap: 5px; }
 .youtube-result-formats[hidden] { display: none; }
 .youtube-result-formats button { min-height: 34px; padding: 0 9px; font-size: .78rem; }
-.csv-download-section { display: grid; max-width: 620px; gap: 12px; margin-top: 10px; padding: 18px; background: var(--surface); border: 1px solid var(--border); border-radius: 18px; }
-.csv-download-section h2 { margin: 0; font-size: 1rem; }
+.csv-download-section { display: grid; gap: 12px; margin-top: 18px; padding: 20px; background: var(--surface); border: 1px solid var(--border); border-radius: 18px; }
+.csv-download-section h2 { margin: 0; font-size: 1.1rem; }
 .csv-download-section > .muted { margin: 0; font-size: .84rem; line-height: 1.5; }
+.csv-download-section input[type="file"] { padding: 6px; border-radius: var(--control-radius); }
+.csv-download-section input[type="file"]::file-selector-button { min-height: 34px; margin-right: 12px; padding: 0 12px; color: var(--text); background: var(--page); border: 1px solid var(--border); border-radius: 9px; font: inherit; cursor: pointer; }
+.csv-download-section input[type="file"]::file-selector-button:hover { background: var(--accent-soft); }
 .csv-download-controls { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 10px; }
 .csv-download-controls .form-field { min-width: 0; }
-.csv-download-section > .primary-button { justify-self: start; }
+.csv-download-section > .secondary-button { justify-self: start; }
 .csv-download-section button:disabled { cursor: not-allowed; opacity: .55; }
 .pi-connection-row { display: flex; align-items: flex-end; gap: 10px; }
 .form-field { display: grid; flex: 1; gap: 7px; min-width: 0; color: var(--muted); font-size: 0.9rem; font-weight: 600; }
@@ -648,12 +651,27 @@ body.has-player main { padding-bottom: 132px; }
 .edit-toolbar { margin: 16px 0; }
 .edit-select-all { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; }
 .edit-batch-card { display: grid; gap: 14px; margin: 0 0 16px; padding: 16px; border: 1px solid var(--border); border-radius: 18px; background: var(--surface); }
+.edit-section-title { margin: 0; font-size: 1rem; font-weight: 650; line-height: 1.3; }
+.edit-filename-heading { margin-top: 6px; padding-top: 18px; border-top: 1px solid var(--border); }
 .edit-fields { display: grid; grid-template-columns: repeat(4, minmax(100px, 1fr)) auto; align-items: end; gap: 10px; }
 .edit-fields .form-field, .edit-mask-row .form-field { margin: 0; }
 .edit-mask-row .form-field { flex: 1; }
 .edit-mask-help { margin: -8px 0 0; font-size: .85rem; }
 .edit-media-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.edit-column-headings { display: none; }
 .edit-media-row { display: grid; grid-template-columns: auto 52px minmax(200px, 1fr) auto auto auto; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 15px; background: var(--surface); }
+@media (min-width: 1101px) {
+  .edit-media-row, .edit-column-headings { grid-template-columns: 20px 52px minmax(240px, 1fr) 100px 210px 44px; }
+  .edit-column-headings { display: grid; align-items: center; gap: 12px; padding: 0 12px 8px; color: var(--muted); font-size: .78rem; font-weight: 600; }
+  .edit-column-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
+}
+@media (min-width: 721px) and (max-width: 1100px) {
+  .edit-media-row { grid-template-columns: 24px 52px minmax(0, 1fr) 44px; gap: 8px; }
+  .edit-media-row .edit-track-fields { grid-column: 3 / -1; grid-row: 2; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .edit-track-meta { grid-column: 2 / -1; grid-row: 3; }
+  .edit-row-actions { grid-column: 2 / -1; grid-row: 4; flex-wrap: wrap; }
+  .edit-save { grid-column: 4; grid-row: 1; }
+}
 .edit-artwork { width: 52px; height: 52px; border-radius: 10px; object-fit: cover; background: var(--accent-soft); }
 .edit-artwork-wrap { position: relative; width: 52px; height: 52px; overflow: hidden; border-radius: 10px; cursor: zoom-in; }
 .edit-artwork-wrap .edit-artwork { display: block; width: 100%; height: 100%; transition: filter .16s ease; }
@@ -718,7 +736,7 @@ body.has-player main { padding-bottom: 132px; }
 .edit-lyrics-sync-value { min-width: 112px; text-align: center; }
 .edit-lyrics-sync-steps { display: flex; flex-wrap: wrap; gap: 6px; }
 .edit-lyrics-sync-reset { margin-left: auto; }
-.edit-save { width: 38px; height: 38px; color: var(--accent); }
+.edit-save { width: 44px; height: 44px; color: var(--accent); border-radius: var(--control-radius); }
 .media-action { display: grid; width: 40px; min-height: 40px; padding: 0; place-items: center; font-size: 1rem; }
 .media-action.secondary { color: var(--text); background: var(--page); border: 1px solid var(--border); }
 .media-action.secondary:hover { background: var(--accent-soft); }
@@ -1001,7 +1019,7 @@ body.dark .media-action.danger:hover { background: #48282b; }
   .pi-connection-row { align-items: stretch; flex-direction: column; }
   .download-link-row { grid-template-columns: minmax(0, 1fr) 120px; gap: 8px; }
   .csv-download-controls { grid-template-columns: minmax(0, 1fr); }
-  .csv-download-controls .secondary-button, .csv-download-section > .primary-button { width: 100%; }
+  .csv-download-controls .secondary-button, .csv-download-section > .secondary-button { width: 100%; }
   .download-form > .primary-button { width: 100%; }
   .youtube-search-row { align-items: stretch; flex-direction: column; }
   .youtube-search-row .secondary-button { width: 100%; }
