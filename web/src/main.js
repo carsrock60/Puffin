@@ -40,6 +40,20 @@ const playerQueue = document.querySelector("#player-queue");
 let queueRecords = [];
 let shuffleEnabled = false;
 let repeatMode = 1;
+const PLAYER_STATE_KEY = "puffin-playback-state-v1";
+let lastPlayerStateSave = 0;
+function savePlayerState(force = false) {
+  const now = Date.now();
+  if (!force && now - lastPlayerStateSave < 1000) return;
+  lastPlayerStateSave = now;
+  try {
+    localStorage.setItem(PLAYER_STATE_KEY, JSON.stringify({
+      queue: queueRecords.map((record) => record.id), mediaId: activeMediaId,
+      time: activePlayer?.currentTime || 0, shuffle: shuffleEnabled,
+      repeat: repeatMode, visualizer: visualizerEnabled,
+    }));
+  } catch { /* Storage may be unavailable or full. */ }
+}
 let playerPane = "lyrics";
 let playerModeCloseTimer;
 let playerModeReturnFocus = null;
@@ -322,6 +336,7 @@ function startVisualizerLoop() {
 
 function setVisualizerEnabled(enabled) {
   visualizerEnabled = enabled;
+  savePlayerState(true);
   fullPlayerVisualizer.hidden = !enabled;
   playerVisualizer.setAttribute("aria-pressed", String(enabled));
   document.querySelector("#full-player-visualizer-button").setAttribute("aria-pressed", String(enabled));
@@ -757,7 +772,7 @@ function restoreVideoToPlayer() {
   videoPriorHistoryState = null;
 }
 
-async function startPlayback(record, startTime = 0, openVideo = false) {
+async function startPlayback(record, startTime = 0, openVideo = false, autoplay = true) {
   const requestId = ++playbackRequestId;
   try {
     if (activePlayer === videoPlayer) sampleVideoProgress(true);
@@ -823,22 +838,24 @@ async function startPlayback(record, startTime = 0, openVideo = false) {
     setDockRevealed(true);
     playerSubtitle.textContent = record.kind === "video" ? `Video · ${record.artist || "Puffin Library"}` : "Puffin Library";
     document.body.classList.add("has-player");
-    if (player === videoPlayer && startTime > 0) {
+    if (startTime > 0) {
       const resume = () => {
-        if (activeMediaId === record.id && Number.isFinite(videoPlayer.duration)) {
-          videoPlayer.currentTime = Math.min(startTime, Math.max(0, videoPlayer.duration - 0.25));
+        if (activeMediaId === record.id && Number.isFinite(player.duration)) {
+          player.currentTime = Math.min(startTime, Math.max(0, player.duration - 0.25));
+          savePlayerState(true);
         }
       };
-      if (videoPlayer.readyState >= 1) resume();
-      else videoPlayer.addEventListener("loadedmetadata", resume, { once: true });
+      if (player.readyState >= 1) resume();
+      else player.addEventListener("loadedmetadata", resume, { once: true });
     }
     if (player === videoPlayer && openVideo) openVideoTheater();
     updatePlayerControls();
 
     try {
-      await player.play();
+      if (autoplay) await player.play();
       recordMediaPlay(record.id).catch((error) => console.warn("Could not update recent plays:", error));
       updatePlayerControls();
+      savePlayerState(true);
       setLibraryStatus(`Playing ${record.name}`);
       if (player === videoPlayer) sampleVideoProgress(true);
     } catch (error) {
@@ -932,6 +949,7 @@ for (const player of [audioPlayer, videoPlayer]) {
     }
   });
   player.addEventListener("timeupdate", () => sampleListeningTime(player));
+  player.addEventListener("timeupdate", () => { if (player === activePlayer) savePlayerState(); });
   player.addEventListener("timeupdate", () => {
     if (player === videoPlayer) sampleVideoProgress();
     if (player === audioPlayer && playerPane === "lyrics" && !playerFullscreen.hidden) {
@@ -1045,6 +1063,7 @@ playerClose.addEventListener("click", stopPlayback);
 function setShuffle(enabled) {
   shuffleEnabled = enabled;
   [playerShuffle, document.querySelector("#full-player-shuffle")].forEach((button) => button.setAttribute("aria-pressed", String(enabled)));
+  savePlayerState(true);
 }
 function cycleRepeat() {
   repeatMode = (repeatMode + 1) % 3;
@@ -1057,6 +1076,7 @@ function cycleRepeat() {
   fullRepeat.textContent = labels[repeatMode];
   fullRepeat.setAttribute("aria-label", labels[repeatMode]);
   fullRepeat.setAttribute("aria-pressed", String(repeatMode !== 0));
+  savePlayerState(true);
 }
 playerShuffle.addEventListener("click", () => setShuffle(!shuffleEnabled));
 document.querySelector("#full-player-shuffle").addEventListener("click", () => setShuffle(!shuffleEnabled));
@@ -1305,6 +1325,24 @@ initializeStats();
 equalizerController = initializeEqualizer({ audioPlayer, videoPlayer });
 initializeWatch({ onPlay: (record, resumeTime) => startPlayback(record, resumeTime, true) });
 initializeListen({ onPlay: (record) => startPlayback(record) });
+
+void (async () => {
+  try {
+    const saved = JSON.parse(localStorage.getItem(PLAYER_STATE_KEY) || "null");
+    if (!saved?.mediaId) return;
+    const media = await listMediaFiles();
+    const byId = new Map(media.map((record) => [record.id, record]));
+    queueRecords = (Array.isArray(saved.queue) ? saved.queue : []).map((id) => byId.get(id)).filter(Boolean);
+    shuffleEnabled = Boolean(saved.shuffle);
+    repeatMode = [0, 1, 2].includes(saved.repeat) ? saved.repeat : 1;
+    setShuffle(shuffleEnabled);
+    if (repeatMode !== 1) { repeatMode = (repeatMode + 2) % 3; cycleRepeat(); }
+    setVisualizerEnabled(Boolean(saved.visualizer));
+    const record = byId.get(saved.mediaId);
+    if (!record) return;
+    await startPlayback(record, Math.max(0, Number(saved.time) || 0), false, false);
+  } catch { /* Ignore a damaged or unavailable saved session. */ }
+})();
 
 if ("serviceWorker" in navigator && window.isSecureContext) {
   window.addEventListener("load", () => {
