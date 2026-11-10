@@ -131,6 +131,7 @@ export async function saveMediaFile(file, metadata = {}) {
     name,
     type: getMediaMimeType(name, mimeType),
     kind: getMediaKind(name, mimeType),
+    artwork: metadata.artwork || "",
     size: file.size,
     lastModified: file.lastModified || Date.now(),
     importedAt: Date.now(),

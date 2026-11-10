@@ -476,9 +476,18 @@ body.dark .player-reveal { background: rgba(30, 36, 40, 0.9); box-shadow: 0 -6px
 .full-player-transport input { width: 100%; accent-color: var(--accent); }
 .full-player-transport button { width: 46px; height: 46px; color: white; background: var(--accent); border: 0; border-radius: 50%; cursor: pointer; }
 .full-player-queue-list { display: grid; gap: 5px; max-height: 55vh; margin: 0; padding: 0; overflow: auto; list-style: none; }
-.full-player-queue-list li { display: grid; grid-template-columns: 44px 44px minmax(0,1fr) auto; align-items: center; gap: 12px; min-height: 58px; padding: 6px 10px; border-radius: 12px; }
+.full-player-queue-list li { position: relative; display: grid; grid-template-columns: 44px 44px minmax(0,1fr) auto 36px; align-items: center; gap: 12px; min-height: 58px; padding: 6px 10px; border-radius: 12px; }
 .full-player-queue-list li.is-current { background: var(--accent-soft); }
-.full-player-queue-list li.is-dragging { opacity: .58; }
+.full-player-queue-list li.is-dragging { z-index: 2; background: var(--surface); box-shadow: 0 12px 28px #0003; transform: scale(1.015); }
+.queue-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.queue-heading h2 { margin: 0; }
+.queue-row-menu { position: relative; }
+.queue-row-menu summary { display: grid; width: 36px; height: 36px; place-items: center; border-radius: 50%; cursor: pointer; list-style: none; }
+.queue-row-menu summary::-webkit-details-marker { display: none; }
+.queue-row-menu > div { position: absolute; z-index: 4; top: 100%; right: 0; display: grid; min-width: 160px; padding: 5px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); box-shadow: 0 8px 24px #0002; }
+.queue-row-menu button { padding: 9px; border: 0; border-radius: 8px; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.queue-row-menu button:hover { background: var(--accent-soft); }
+@media (prefers-reduced-motion: reduce) { .full-player-queue-list li { transition: none; } }
 .full-player-queue-list .queue-empty-state { display: block; padding: 20px; color: var(--muted); text-align: center; }
 .queue-drag-handle { display: grid; width: 44px; height: 44px; place-items: center; padding: 0; color: var(--muted); background: transparent; border: 0; border-radius: 9px; cursor: grab; touch-action: none; user-select: none; font-size: 1.15rem; text-align: center; }
 .queue-drag-handle.is-dragging { cursor: grabbing; }

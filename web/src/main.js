@@ -460,6 +460,7 @@ function renderPlayerQueue() {
       if (destination === index) return;
       const [item] = queueRecords.splice(index, 1);
       queueRecords.splice(destination, 0, item);
+      savePlayerState(true);
       renderPlayerQueue();
       [...fullPlayerQueueList.querySelectorAll("li[data-queue-id]")]
         .find((queueRow) => queueRow.dataset.queueId === record.id)
@@ -478,9 +479,35 @@ function renderPlayerQueue() {
     play.textContent = record.id === activeMediaId ? "Playing" : "Play";
     play.disabled = record.id === activeMediaId;
     play.addEventListener("click", () => startPlayback(record));
-    row.append(handle, art, title, play);
+    const actions = document.createElement("details");
+    actions.className = "queue-row-menu";
+    const summary = document.createElement("summary");
+    summary.textContent = "•••";
+    summary.setAttribute("aria-label", `Queue actions for ${record.title || record.name}`);
+    const menu = document.createElement("div");
+    const next = document.createElement("button");
+    next.type = "button";
+    next.textContent = "Play next";
+    next.addEventListener("click", () => { queueRecords = queueRecords.filter((item) => item.id !== record.id); const current = queueRecords.findIndex((item) => item.id === activeMediaId); queueRecords.splice(Math.max(0, current + 1), 0, record); savePlayerState(true); renderPlayerQueue(); });
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.textContent = "Remove from queue";
+    remove.addEventListener("click", () => { queueRecords = queueRecords.filter((item) => item.id !== record.id); savePlayerState(true); renderPlayerQueue(); });
+    menu.append(next, remove); actions.append(summary, menu);
+    row.append(handle, art, title, play, actions);
     fullPlayerQueueList.append(row);
   });
+}
+
+function animateQueueRender(previousPositions) {
+  renderPlayerQueue();
+  for (const row of fullPlayerQueueList.querySelectorAll("li[data-queue-id]")) {
+    const before = previousPositions.get(row.dataset.queueId);
+    if (!before || row.dataset.queueId === dragQueueId) continue;
+    const after = row.getBoundingClientRect();
+    const dx = before.left - after.left, dy = before.top - after.top;
+    if (dx || dy) row.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: "translate(0, 0)" }], { duration: 190, easing: "cubic-bezier(.2,.75,.25,1)" });
+  }
 }
 
 async function prepareQueue(record) {
@@ -522,9 +549,11 @@ document.addEventListener("pointermove", (event) => {
   const target = document.elementFromPoint(event.clientX, event.clientY)?.closest("li[data-queue-id]");
   const to = target ? queueRecords.findIndex((record) => record.id === target.dataset.queueId) : -1;
   if (from < 0 || to < 0 || from === to) return;
+  const previousPositions = new Map([...fullPlayerQueueList.querySelectorAll("li[data-queue-id]")].map((row) => [row.dataset.queueId, row.getBoundingClientRect()]));
   const [record] = queueRecords.splice(from, 1);
   queueRecords.splice(to, 0, record);
-  renderPlayerQueue();
+  savePlayerState(true);
+  animateQueueRender(previousPositions);
 });
 function finishQueueDrag() {
   window.clearTimeout(queueHoldTimer);
@@ -853,7 +882,7 @@ async function startPlayback(record, startTime = 0, openVideo = false, autoplay 
 
     try {
       if (autoplay) await player.play();
-      recordMediaPlay(record.id).catch((error) => console.warn("Could not update recent plays:", error));
+      if (autoplay) recordMediaPlay(record.id).catch((error) => console.warn("Could not update recent plays:", error));
       updatePlayerControls();
       savePlayerState(true);
       setLibraryStatus(`Playing ${record.name}`);
@@ -903,6 +932,7 @@ async function stopPlayback() {
   playerTrack.classList.remove("is-video");
   playerSubtitle.textContent = "Puffin Library";
   document.body.classList.remove("has-player");
+  try { localStorage.removeItem(PLAYER_STATE_KEY); } catch { /* Storage may be unavailable. */ }
   updatePlayerControls();
 }
 
@@ -1060,6 +1090,13 @@ playerSpeed.addEventListener("change", () => {
 });
 
 playerClose.addEventListener("click", stopPlayback);
+window.addEventListener("puffin:add-to-queue", (event) => {
+  const record = event.detail;
+  if (!record || record.kind !== "audio" || queueRecords.some((item) => item.id === record.id)) return;
+  queueRecords.push(record);
+  savePlayerState(true);
+  renderPlayerQueue();
+});
 function setShuffle(enabled) {
   shuffleEnabled = enabled;
   [playerShuffle, document.querySelector("#full-player-shuffle")].forEach((button) => button.setAttribute("aria-pressed", String(enabled)));
@@ -1100,6 +1137,12 @@ document.querySelector("#full-player-eq-button").addEventListener("click", () =>
   setPlayerPane(playerPane === "equalizer" ? "lyrics" : "equalizer");
 });
 document.querySelector("#full-player-back").addEventListener("click", closePlayerMode);
+document.querySelector("#queue-clear").addEventListener("click", () => {
+  if (queueRecords.length > 1 && !window.confirm("Clear all upcoming tracks from the queue?")) return;
+  queueRecords = activeMediaId ? queueRecords.filter((record) => record.id === activeMediaId) : [];
+  savePlayerState(true);
+  renderPlayerQueue();
+});
 document.querySelector("#full-player-toggle").addEventListener("click", async () => {
   if (!activePlayer) return;
   if (activePlayer.paused) { try { await activePlayer.play(); } catch {} }

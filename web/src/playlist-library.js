@@ -370,6 +370,7 @@ export function initializePlaylistLibrary({ onPlay, onDeleted }) {
       }); menu.append(remove);
     } else {
       const add = document.createElement("button"); add.type = "button"; add.textContent = "Add to playlist"; add.addEventListener("click", () => openAddToPlaylistDialog(record)); menu.append(add);
+      if (record.kind === "audio") { const queue = document.createElement("button"); queue.type = "button"; queue.textContent = "Add to queue"; queue.addEventListener("click", () => { window.dispatchEvent(new CustomEvent("puffin:add-to-queue", { detail: record })); overflow.open = false; }); menu.append(queue); }
     }
     const removeLibrary = document.createElement("button"); removeLibrary.type = "button"; removeLibrary.className = "danger-menu-action"; removeLibrary.textContent = "Delete from library"; removeLibrary.addEventListener("click", () => openDeleteMediaDialog(record)); menu.append(removeLibrary);
     overflow.append(summary, menu);

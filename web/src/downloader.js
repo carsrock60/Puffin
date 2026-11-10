@@ -224,6 +224,37 @@ async function readDirectMedia(response, sourceUrl, capacity, onProgress) {
   return { blob: new Blob(chunks, { type: mimeType || "application/octet-stream" }), name, mimeType };
 }
 
+async function videoFrameArtwork(blob) {
+  const video = document.createElement("video");
+  const url = URL.createObjectURL(blob);
+  video.preload = "metadata";
+  video.muted = true;
+  video.playsInline = true;
+  try {
+    video.src = url;
+    await new Promise((resolve, reject) => {
+      const timeout = window.setTimeout(() => reject(new Error("Video thumbnail timed out")), 8000);
+      video.addEventListener("loadedmetadata", () => {
+        video.currentTime = Math.min(1, Math.max(0, video.duration / 2));
+      }, { once: true });
+      video.addEventListener("seeked", () => { clearTimeout(timeout); resolve(); }, { once: true });
+      video.addEventListener("error", () => { clearTimeout(timeout); reject(new Error("Video thumbnail unavailable")); }, { once: true });
+    });
+    const scale = Math.min(1, 480 / video.videoWidth);
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
+    canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
+    canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL("image/jpeg", 0.78);
+  } catch {
+    return "";
+  } finally {
+    video.pause();
+    video.removeAttribute("src");
+    URL.revokeObjectURL(url);
+  }
+}
+
 export function initializeDownloader() {
   const form = document.querySelector("#download-form");
   const piAddress = document.querySelector("#settings-pi-address");
@@ -644,7 +675,8 @@ export function initializeDownloader() {
       } catch {
         // IndexedDB can still save the file when persistent storage is unavailable.
       }
-      await saveMediaFile(mediaBlob, { name: filename, type: currentJob.mime_type || mediaBlob.type });
+      const artwork = currentJob.kind === "video" ? await videoFrameArtwork(mediaBlob) : "";
+      await saveMediaFile(mediaBlob, { name: filename, type: currentJob.mime_type || mediaBlob.type, artwork });
       savedLocally = true;
       recordPuffinActivity("downloads").catch((statsError) => console.warn("Could not record completed download:", statsError));
       window.dispatchEvent(new Event("puffin:library-updated"));
