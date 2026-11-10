@@ -450,6 +450,7 @@ async function savePlaylistName(id, name) {
     }
     throw error;
   }
+  window.dispatchEvent(new Event("puffin:playlists-updated"));
 }
 
 export function createPlaylist(name) {
@@ -466,6 +467,7 @@ export async function deletePlaylist(id) {
   const completion = transactionComplete(transaction);
   transaction.objectStore(PLAYLISTS_STORE).delete(id);
   await completion;
+  window.dispatchEvent(new Event("puffin:playlists-updated"));
 }
 
 export async function setPlaylistPinned(id, pinned) {
@@ -484,6 +486,21 @@ export async function setPlaylistPinned(id, pinned) {
     store.put(request.result);
   };
   await completion;
+  window.dispatchEvent(new Event("puffin:playlists-updated"));
+}
+
+export async function setPlaylistArtwork(id, artwork) {
+  const database = await openDatabase();
+  const transaction = database.transaction(PLAYLISTS_STORE, "readwrite");
+  const completion = transactionComplete(transaction);
+  const store = transaction.objectStore(PLAYLISTS_STORE);
+  const request = store.get(id);
+  request.onsuccess = () => {
+    if (!request.result) { transaction.abort(); return; }
+    store.put({ ...request.result, artwork, updatedAt: Date.now() });
+  };
+  await completion;
+  window.dispatchEvent(new Event("puffin:playlists-updated"));
 }
 
 export async function addMediaToPlaylist(playlistId, mediaId) {

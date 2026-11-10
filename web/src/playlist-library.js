@@ -10,6 +10,7 @@ import {
   removeMediaFromPlaylist,
   renamePlaylist,
   setPlaylistPinned,
+  setPlaylistArtwork,
 } from "./library.js";
 
 const ICONS = {
@@ -277,6 +278,18 @@ export function initializePlaylistLibrary({ onPlay, onDeleted }) {
       const renameButton = document.createElement("button");
       renameButton.type = "button";
       renameButton.textContent = "Rename";
+      const artworkInput = document.createElement("input");
+      artworkInput.type = "file"; artworkInput.accept = "image/*"; artworkInput.hidden = true;
+      const artworkButton = document.createElement("button");
+      artworkButton.type = "button"; artworkButton.textContent = "Change artwork";
+      artworkButton.addEventListener("click", () => artworkInput.click());
+      artworkInput.addEventListener("change", () => {
+        const file = artworkInput.files?.[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = async () => { try { await setPlaylistArtwork(playlist.id, reader.result); actions.open = false; await render(); } catch { setStatus("Could not save playlist artwork."); } };
+        reader.readAsDataURL(file);
+      });
       renameButton.addEventListener("click", (event) => {
         event.stopPropagation();
         actions.open = false;
@@ -292,7 +305,7 @@ export function initializePlaylistLibrary({ onPlay, onDeleted }) {
         actions.open = false;
         openDeletePlaylistDialog(playlist);
       });
-      menu.append(pinButton, renameButton, deleteButton);
+      menu.append(pinButton, artworkButton, artworkInput, renameButton, deleteButton);
       actions.append(menu);
       item.append(selectButton, actions);
       playlistList.append(item);

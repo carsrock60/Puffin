@@ -38,6 +38,7 @@ const playerRepeat = document.querySelector("#player-repeat");
 const playerVisualizer = document.querySelector("#player-visualizer");
 const playerQueue = document.querySelector("#player-queue");
 let queueRecords = [];
+let playlistQueueActive = false;
 let shuffleEnabled = false;
 let repeatMode = 1;
 const PLAYER_STATE_KEY = "puffin-playback-state-v1";
@@ -512,6 +513,8 @@ function animateQueueRender(previousPositions) {
 
 async function prepareQueue(record) {
   if (record.kind !== "audio") return;
+  if (playlistQueueActive && queueRecords.some((item) => item.id === record.id)) { renderPlayerQueue(); return; }
+  playlistQueueActive = false;
   try {
     const allAudio = (await listMediaFiles()).filter((item) => item.kind === "audio");
     const available = new Map(allAudio.map((item) => [item.id, item]));
@@ -1408,7 +1411,19 @@ initializeEdit({
     return activeMediaId === record.id && activePlayer === audioPlayer && !audioPlayer.paused;
   },
 });
-initializeHome({ onPlay: (record) => startPlayback(record, 0, record.kind === "video") });
+initializeHome({
+  onPlay: (record) => { playlistQueueActive = false; return startPlayback(record, 0, record.kind === "video"); },
+  onPlayPlaylist: async (playlist) => {
+    const records = await listMediaFiles();
+    const byId = new Map(records.filter((record) => record.kind === "audio").map((record) => [record.id, record]));
+    const items = playlist.mediaIds.map((id) => byId.get(id)).filter(Boolean);
+    if (!items.length) { setLibraryStatus("This playlist has no songs to play."); return; }
+    queueRecords = items;
+    playlistQueueActive = true;
+    setShuffle(true);
+    await startPlayback(items[Math.floor(Math.random() * items.length)]);
+  },
+});
 initializeStats();
 equalizerController = initializeEqualizer({ audioPlayer, videoPlayer });
 initializeWatch({ onPlay: (record, resumeTime) => startPlayback(record, resumeTime, true) });

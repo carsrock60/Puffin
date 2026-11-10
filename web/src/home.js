@@ -1,4 +1,4 @@
-import { listMediaFiles, listRecentlyPlayed } from "./library.js";
+import { listMediaFiles, listRecentlyPlayed, listPlaylists } from "./library.js";
 import { getHomePreferences } from "./home-preferences.js";
 
 const stripExtension = (name) => name.replace(/\.[^.]+$/, "");
@@ -26,7 +26,24 @@ async function recommendationArtwork(artist, title) {
   }
 }
 
-export function initializeHome({ onPlay }) {
+export function initializeHome({ onPlay, onPlayPlaylist }) {
+  async function refreshPlaylists() {
+    const playlists = await listPlaylists();
+    const list = document.querySelector("#quick-play-list");
+    document.querySelector("#quick-play-empty").hidden = playlists.length > 0;
+    list.replaceChildren(...playlists.map((playlist) => {
+      const item = document.createElement("li");
+      const button = document.createElement("button"); button.type = "button"; button.className = "quick-play-card";
+      button.setAttribute("aria-label", `Shuffle ${playlist.name}`);
+      const image = document.createElement("img"); image.src = playlist.artwork || "/favicon.svg"; image.alt = "";
+      image.onerror = () => { image.onerror = null; image.src = "/favicon.svg"; };
+      const title = document.createElement("span"); title.textContent = playlist.name;
+      button.append(image, title); button.addEventListener("click", () => onPlayPlaylist(playlist)); item.append(button); return item;
+    }));
+  }
+  window.addEventListener("puffin:playlists-updated", () => { refreshPlaylists().catch(() => {}); });
+  window.addEventListener("puffin:library-view", () => { refreshPlaylists().catch(() => {}); });
+  refreshPlaylists().catch(() => {});
   const recentSection = document.querySelector("#recently-played-section");
   const recentList = document.querySelector("#recently-played-list");
   const recentEmpty = document.querySelector("#recently-played-empty");
