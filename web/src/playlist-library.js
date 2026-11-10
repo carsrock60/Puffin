@@ -50,6 +50,7 @@ export function initializePlaylistLibrary({ onPlay, onDeleted }) {
   const libraryStatus = document.querySelector("#library-status");
   const libraryStorage = document.querySelector("#library-storage");
   const mediaList = document.querySelector("#media-list");
+  const mediaSearch = document.querySelector("#library-media-search");
   const playlistList = document.querySelector("#playlist-list");
   const playlistBrowser = document.querySelector("#playlist-browser");
   const libraryLayout = document.querySelector("#playlist-library-layout");
@@ -77,6 +78,7 @@ export function initializePlaylistLibrary({ onPlay, onDeleted }) {
   let mediaKindFilter = null;
   let currentLibraryView = "library";
   let dialogAction = null;
+  let mediaSearchQuery = "";
 
   function setStatus(message) {
     libraryStatus.textContent = message;
@@ -394,9 +396,13 @@ export function initializePlaylistLibrary({ onPlay, onDeleted }) {
     const selectedRecords = playlist
       ? playlist.mediaIds.map((id) => mediaRecords.find((record) => record.id === id)).filter(Boolean)
       : currentLibraryView === "playlists" ? [] : mediaRecords;
-    const visibleRecords = mediaKindFilter
+    const kindFilteredRecords = mediaKindFilter
       ? selectedRecords.filter((record) => record.kind === mediaKindFilter)
       : selectedRecords;
+    const query = mediaSearchQuery.toLocaleLowerCase().trim();
+    const visibleRecords = kindFilteredRecords.filter((record) => !query || [record.title, record.name, record.artist, record.album, record.genre].filter(Boolean).join(" ").toLocaleLowerCase().includes(query));
+    mediaSearch.hidden = currentLibraryView === "playlists" && !playlist;
+    mediaSearch.value = mediaSearchQuery;
 
     viewEyebrow.textContent = playlist ? "PLAYLISTS" : mediaKindFilter === "audio" ? "YOUR MUSIC" : "LIBRARY";
     viewTitle.textContent = playlist?.name || (currentLibraryView === "playlists" ? "Playlists" : mediaKindFilter === "audio" ? "Listen" : "All media");
@@ -410,7 +416,7 @@ export function initializePlaylistLibrary({ onPlay, onDeleted }) {
         return;
       } else if (playlist) {
         const message = document.createElement("p");
-        message.textContent = "This playlist is empty.";
+        message.textContent = query && kindFilteredRecords.length ? "No media in this playlist matches your search." : "This playlist is empty.";
         const browse = document.createElement("button");
         browse.type = "button";
         browse.className = "secondary-button";
@@ -488,6 +494,7 @@ export function initializePlaylistLibrary({ onPlay, onDeleted }) {
     }
   });
   createPlaylistButton.addEventListener("click", () => openCreateDialog());
+  mediaSearch.addEventListener("input", () => { mediaSearchQuery = mediaSearch.value; renderMediaList(); });
   cancelDialogButton.addEventListener("click", () => dialog.close());
   dialog.addEventListener("click", (event) => {
     if (event.target === dialog) dialog.close();

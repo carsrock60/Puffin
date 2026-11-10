@@ -612,6 +612,44 @@ function updatePlayerControls() {
   updateVideoTheaterControls();
 }
 
+function updateMediaSession() {
+  const session = navigator.mediaSession;
+  if (!session || !activeMediaRecord || !activePlayer) return;
+  const record = activeMediaRecord;
+  const artwork = record.artwork || "/favicon.svg";
+  const sizes = [96, 128, 192, 256, 384, 512];
+  try {
+    session.metadata = new MediaMetadata({
+      title: record.title || record.name.replace(/\.[^.]+$/, ""),
+      artist: record.artist || "Puffin Library",
+      album: record.album || "",
+      artwork: sizes.map((size) => ({ src: artwork, sizes: `${size}x${size}` })),
+    });
+    session.playbackState = activePlayer.paused ? "paused" : "playing";
+    if (Number.isFinite(activePlayer.duration) && activePlayer.duration > 0) {
+      session.setPositionState?.({ duration: activePlayer.duration, playbackRate: activePlayer.playbackRate || 1, position: Math.min(activePlayer.currentTime, activePlayer.duration) });
+    }
+  } catch { /* Ignore unsupported metadata or position state. */ }
+}
+
+function installMediaSessionActions() {
+  const session = navigator.mediaSession;
+  if (!session) return;
+  const actions = {
+    play: () => activePlayer?.play().catch(() => {}),
+    pause: () => activePlayer?.pause(),
+    stop: () => stopPlayback(),
+    nexttrack: () => advanceQueue(),
+    previoustrack: () => { if (activePlayer) { activePlayer.currentTime = 0; if (activePlayer.paused) activePlayer.play().catch(() => {}); } },
+    seekto: (details) => { if (activePlayer && Number.isFinite(details.seekTime)) activePlayer.currentTime = details.seekTime; },
+    seekbackward: (details) => { if (activePlayer) activePlayer.currentTime = Math.max(0, activePlayer.currentTime - (details.seekOffset || 10)); },
+    seekforward: (details) => { if (activePlayer) activePlayer.currentTime = Math.min(activePlayer.duration || Infinity, activePlayer.currentTime + (details.seekOffset || 10)); },
+  };
+  for (const [action, handler] of Object.entries(actions)) {
+    try { session.setActionHandler(action, handler); } catch { /* Browser does not support this action. */ }
+  }
+}
+
 function updateVideoTheaterControls() {
   const duration = Number.isFinite(videoPlayer.duration) ? videoPlayer.duration : 0;
   const currentTime = Number.isFinite(videoPlayer.currentTime) ? videoPlayer.currentTime : 0;
@@ -827,6 +865,7 @@ async function startPlayback(record, startTime = 0, openVideo = false, autoplay 
     activeObjectUrl = URL.createObjectURL(playableBlob);
     activeMediaId = record.id;
     activeMediaRecord = record;
+    updateMediaSession();
     if (record.kind === "video" && !playerFullscreen.hidden) closePlayerMode();
     void prepareQueue(record);
     renderPlayerQueue();
@@ -917,6 +956,10 @@ async function stopPlayback() {
   activeMediaId = null;
   activeMediaRecord = null;
   activePlayer = null;
+  if (navigator.mediaSession) {
+    navigator.mediaSession.metadata = null;
+    navigator.mediaSession.playbackState = "none";
+  }
   isSeeking = false;
   mediaPlayer.hidden = true;
   playerDock.hidden = true;
@@ -958,6 +1001,7 @@ window.addEventListener("puffin:metadata-updated", (event) => {
     renderPlayerLyrics(record);
   }
   activeMediaRecord = record;
+  updateMediaSession();
   if (record.artwork) playerArtwork.src = record.artwork;
   playerArtwork.hidden = record.kind === "video" && !record.artwork;
   playerVideoFallback.hidden = record.kind !== "video" || Boolean(record.artwork);
@@ -970,7 +1014,7 @@ window.addEventListener("puffin:metadata-updated", (event) => {
 
 for (const player of [audioPlayer, videoPlayer]) {
   for (const eventName of ["loadedmetadata", "durationchange", "timeupdate", "play", "pause", "ended"]) {
-    player.addEventListener(eventName, updatePlayerControls);
+    player.addEventListener(eventName, () => { updatePlayerControls(); if (player === activePlayer) updateMediaSession(); });
   }
   player.addEventListener("play", () => {
     if (player === activePlayer && player === audioPlayer) {
@@ -1356,6 +1400,7 @@ playerDock.addEventListener("focusout", (event) => {
 });
 
 initializeDownloader();
+installMediaSessionActions();
 initializeSettings();
 initializeEdit({
   onPreview: async (record) => {

@@ -209,6 +209,7 @@ export async function updateMediaMetadata(id, updates) {
   return updatedRecord;
 }
 
+
 export async function getMediaBlob(id) {
   const database = await openDatabase();
   const request = database.transaction(FILES_STORE, "readonly").objectStore(FILES_STORE).get(id);
