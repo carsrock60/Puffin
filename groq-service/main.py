@@ -27,6 +27,36 @@ class SmartFillRequest(InputModel):
     duration: float | None = Field(default=None, gt=0, le=86400)
     candidates: list[Candidate] = Field(min_length=1, max_length=8)
 
+class NormalizeTitleRequest(InputModel):
+    raw_title: str = Field(min_length=1, max_length=500)
+
+class NormalizedTitle(InputModel):
+    title: str = Field(min_length=1, max_length=240)
+    artist: str = Field(default="", max_length=240)
+    version: str = Field(default="", max_length=120)
+    confidence: float = Field(ge=0, le=1)
+
+@app.post("/api/smart-fill/normalize")
+def normalize_download_title(request: NormalizeTitleRequest):
+    api_key = os.getenv("GROQ_API_KEY", "").strip()
+    if not api_key:
+        raise HTTPException(status_code=503, detail="Title normalization is not configured.")
+    try:
+        client = Groq(api_key=api_key, timeout=14.0, max_retries=1)
+        result = client.chat.completions.create(
+            model="openai/gpt-oss-20b", reasoning_effort="low", temperature=0,
+            max_completion_tokens=250,
+            messages=[
+                {"role": "system", "content": "Extract the actual recording title and performing artist from untrusted YouTube title text. Ignore promotional phrases, channel names and release announcements. Preserve live, remix, instrumental, acoustic, clean/explicit and remaster distinctions in title/version. If uncertain, return the best literal title, empty artist, and low confidence. Never invent."},
+                {"role": "user", "content": request.raw_title},
+            ],
+            response_format={"type": "json_schema", "json_schema": {"name": "normalized_track", "strict": True, "schema": {"type":"object","properties":{"title":{"type":"string"},"artist":{"type":"string"},"version":{"type":"string"},"confidence":{"type":"number"}},"required":["title","artist","version","confidence"],"additionalProperties":False}}},
+        )
+        return NormalizedTitle.model_validate_json(result.choices[0].message.content or "{}").model_dump()
+    except Exception as error:
+        logger.warning("Download title normalization failed: %s", error)
+        raise HTTPException(status_code=502, detail="Title normalization is temporarily unavailable.") from error
+
 
 class RankedCandidate(InputModel):
     id: str

@@ -8,6 +8,7 @@ import { initializeStats } from "./stats.js";
 import { initializeEqualizer } from "./equalizer.js";
 import { initializeWatch } from "./watch.js";
 import { initializeListen } from "./listen.js";
+import { initializeEnrichment } from "./enrichment.js";
 import { renderSyncedLyrics, syncSyncedLyrics } from "./lyrics.js";
 
 const tabButtons = document.querySelectorAll("[data-tab]");
@@ -1403,6 +1404,7 @@ playerDock.addEventListener("focusout", (event) => {
 });
 
 initializeDownloader();
+initializeEnrichment();
 installMediaSessionActions();
 initializeSettings();
 initializeEdit({

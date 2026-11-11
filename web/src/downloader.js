@@ -676,7 +676,8 @@ export function initializeDownloader() {
         // IndexedDB can still save the file when persistent storage is unavailable.
       }
       const artwork = currentJob.kind === "video" ? await videoFrameArtwork(mediaBlob) : "";
-      await saveMediaFile(mediaBlob, { name: filename, type: currentJob.mime_type || mediaBlob.type, artwork });
+      const savedRecord = await saveMediaFile(mediaBlob, { name: filename, type: currentJob.mime_type || mediaBlob.type, artwork, rawTitle: filename.replace(/\.[^.]+$/, "") });
+      if (savedRecord.kind === "audio") window.dispatchEvent(new CustomEvent("puffin:download-saved", { detail: savedRecord }));
       savedLocally = true;
       recordPuffinActivity("downloads").catch((statsError) => console.warn("Could not record completed download:", statsError));
       window.dispatchEvent(new Event("puffin:library-updated"));

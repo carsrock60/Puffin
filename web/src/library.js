@@ -132,6 +132,9 @@ export async function saveMediaFile(file, metadata = {}) {
     type: getMediaMimeType(name, mimeType),
     kind: getMediaKind(name, mimeType),
     artwork: metadata.artwork || "",
+    rawTitle: metadata.rawTitle || name.replace(/\.[^.]+$/, ""),
+    metadataSources: { title: "embedded", artist: "embedded", album: "embedded", albumArtist: "embedded", genre: "embedded", year: "embedded", artwork: metadata.artwork ? "embedded" : "embedded", syncedLyrics: "embedded" },
+    enrichment: metadata.enrichment || null,
     size: file.size,
     lastModified: file.lastModified || Date.now(),
     importedAt: Date.now(),
@@ -201,12 +204,41 @@ export async function updateMediaMetadata(id, updates) {
       transaction.abort();
       return;
     }
-    updatedRecord = { ...request.result, ...updates, updatedAt: Date.now() };
+    const sources = { ...(request.result.metadataSources || {}) };
+    for (const key of Object.keys(updates)) sources[key] = "user";
+    updatedRecord = { ...request.result, ...updates, metadataSources: sources, updatedAt: Date.now() };
     store.put(updatedRecord);
   };
   await completion;
   window.dispatchEvent(new CustomEvent("puffin:metadata-updated", { detail: updatedRecord }));
   return updatedRecord;
+}
+
+export async function applyEnrichmentUpdate(id, updates, expectedUpdatedAt, outcomes) {
+  const db = await openDatabase();
+  const tx = db.transaction(TRACKS_STORE, "readwrite");
+  const done = transactionComplete(tx);
+  const store = tx.objectStore(TRACKS_STORE);
+  let result;
+  const request = store.get(id);
+  request.onsuccess = () => {
+    const current = request.result;
+    if (!current) return;
+    const sources = { ...(current.metadataSources || {}) };
+    const accepted = {};
+    for (const [field, value] of Object.entries(updates)) {
+      if (value == null || value === "" || sources[field] === "user") continue;
+      if ((current.updatedAt || null) !== (expectedUpdatedAt || null) && !sources[field]) continue;
+      accepted[field] = value;
+      sources[field] = "auto";
+    }
+    result = { ...current, ...accepted, metadataSources: sources,
+      enrichment: { ...(current.enrichment || {}), ...outcomes, updatedAt: Date.now() } };
+    store.put(result);
+  };
+  await done;
+  if (result) window.dispatchEvent(new CustomEvent("puffin:metadata-updated", { detail: result }));
+  return result || null;
 }
 
 
