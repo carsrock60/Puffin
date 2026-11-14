@@ -20,3 +20,15 @@ export function evaluateRecordingMatch(track, candidate) {
   if (Number(candidate.aiScore) < ENRICHMENT_POLICY.minAiScore || !Number.isFinite(Number(candidate.aiScore))) return "medium";
   return "high";
 }
+
+export function mapRankedCandidates(originals, ranking) {
+  const byId = new Map(originals.map((candidate) => [candidate.id, candidate]));
+  return (ranking?.ranked_candidates || []).flatMap((ranked) => {
+    const original = byId.get(ranked.id);
+    return original ? [{ ...original, aiScore: ranked.score, aiReason: ranked.reason }] : [];
+  }).sort((a, b) => b.aiScore - a.aiScore);
+}
+
+export function selectHighConfidenceCandidate(track, originals, ranking) {
+  return mapRankedCandidates(originals, ranking).find((candidate) => evaluateRecordingMatch(track, candidate) === "high") || null;
+}

@@ -1,4 +1,4 @@
-import { getMediaBlob, listMediaFiles, recordMediaPlay, recordListeningTime, recordVideoWatchProgress } from "./library.js";
+import { cacheRemoteArtwork, getMediaBlob, listMediaFiles, recordMediaPlay, recordListeningTime, recordVideoWatchProgress } from "./library.js";
 import { initializeDownloader } from "./downloader.js";
 import { initializePlaylistLibrary } from "./playlist-library.js";
 import { initializeSettings } from "./settings.js";
@@ -10,6 +10,30 @@ import { initializeWatch } from "./watch.js";
 import { initializeListen } from "./listen.js";
 import { initializeEnrichment } from "./enrichment.js";
 import { renderSyncedLyrics, syncSyncedLyrics } from "./lyrics.js";
+
+const artworkCacheTasks = new Map();
+function queueArtworkCache(record) {
+  if (!navigator.onLine || !record?.artwork || !/^https?:\/\//i.test(record.artwork)) return;
+  if (artworkCacheTasks.has(record.id)) return artworkCacheTasks.get(record.id);
+  const task = cacheRemoteArtwork(record)
+    .catch((error) => console.warn(`Could not save offline artwork for ${record.name}:`, error))
+    .finally(() => artworkCacheTasks.delete(record.id));
+  artworkCacheTasks.set(record.id, task);
+  return task;
+}
+
+async function cacheLibraryArtwork() {
+  if (!navigator.onLine) return;
+  try {
+    const records = await listMediaFiles();
+    const remoteArtwork = records.filter((record) => /^https?:\/\//i.test(record.artwork || ""));
+    for (let index = 0; index < remoteArtwork.length; index += 4) {
+      await Promise.all(remoteArtwork.slice(index, index + 4).map(queueArtworkCache));
+    }
+  } catch (error) {
+    console.warn("Could not check the library for offline artwork:", error);
+  }
+}
 
 const tabButtons = document.querySelectorAll("[data-tab]");
 const panels = document.querySelectorAll("[data-panel]");
@@ -165,6 +189,7 @@ const audioPlayer = document.querySelector("#audio-player");
 const videoPlayer = document.querySelector("#video-player");
 const playerArtwork = document.querySelector("#player-artwork");
 const playerSubtitle = document.querySelector("#player-subtitle");
+const playerStatus = document.querySelector("#player-status");
 const playerToggle = document.querySelector("#player-toggle");
 const playerSeek = document.querySelector("#player-seek");
 const playerCurrentTime = document.querySelector("#player-current-time");
@@ -190,6 +215,10 @@ const videoPlayerStatus = document.querySelector("#video-player-status");
 const videoTheaterControls = document.querySelector("#video-theater-controls");
 const playerVideoFallback = document.querySelector("#player-video-fallback");
 const playerTrack = document.querySelector(".player-track");
+
+function setLibraryStatus(message) {
+  libraryStatus.textContent = message;
+}
 playerArtwork.addEventListener("error", () => {
   if (activeMediaRecord?.kind === "video") {
     playerArtwork.hidden = true;
@@ -597,6 +626,18 @@ function getPlaybackErrorMessage(player, error) {
   return `Playback failed${error?.name ? ` (${error.name})` : ""}.`;
 }
 
+function setPlayerStatus(message) {
+  playerStatus.textContent = message;
+  setLibraryStatus(message);
+}
+
+function playPlayerFromGesture(player) {
+  // Resume a Web Audio route and request media playback in the same user
+  // gesture. iOS can suspend AudioContext when the PWA is backgrounded.
+  const resumePromise = equalizerController?.resumeForPlayback?.() || Promise.resolve();
+  return Promise.all([player.play(), resumePromise]);
+}
+
 function updatePlayerControls() {
   const duration = activePlayer && Number.isFinite(activePlayer.duration) ? activePlayer.duration : 0;
   const currentTime = activePlayer && Number.isFinite(activePlayer.currentTime) ? activePlayer.currentTime : 0;
@@ -640,11 +681,11 @@ function installMediaSessionActions() {
   const session = navigator.mediaSession;
   if (!session) return;
   const actions = {
-    play: () => activePlayer?.play().catch(() => {}),
+    play: () => activePlayer && playPlayerFromGesture(activePlayer).catch((error) => setPlayerStatus(getPlaybackErrorMessage(activePlayer, error))),
     pause: () => activePlayer?.pause(),
     stop: () => stopPlayback(),
     nexttrack: () => advanceQueue(),
-    previoustrack: () => { if (activePlayer) { activePlayer.currentTime = 0; if (activePlayer.paused) activePlayer.play().catch(() => {}); } },
+    previoustrack: () => { if (activePlayer) { activePlayer.currentTime = 0; if (activePlayer.paused) playPlayerFromGesture(activePlayer).catch((error) => setPlayerStatus(getPlaybackErrorMessage(activePlayer, error))); } },
     seekto: (details) => { if (activePlayer && Number.isFinite(details.seekTime)) activePlayer.currentTime = details.seekTime; },
     seekbackward: (details) => { if (activePlayer) activePlayer.currentTime = Math.max(0, activePlayer.currentTime - (details.seekOffset || 10)); },
     seekforward: (details) => { if (activePlayer) activePlayer.currentTime = Math.min(activePlayer.duration || Infinity, activePlayer.currentTime + (details.seekOffset || 10)); },
@@ -902,12 +943,14 @@ async function startPlayback(record, startTime = 0, openVideo = false, autoplay 
     otherPlayer.hidden = true;
     player.hidden = false;
     player.src = activeObjectUrl;
+    player.load();
     player.playbackRate = 1;
     player.defaultPlaybackRate = 1;
     playerSpeed.value = "1";
     activePlayer = player;
     setPlayerRevealState(false);
     setDockRevealed(true);
+    setPlayerStatus("");
     playerSubtitle.textContent = record.kind === "video" ? `Video · ${record.artist || "Puffin Library"}` : "Puffin Library";
     document.body.classList.add("has-player");
     if (startTime > 0) {
@@ -924,20 +967,20 @@ async function startPlayback(record, startTime = 0, openVideo = false, autoplay 
     updatePlayerControls();
 
     try {
-      if (autoplay) await player.play();
+      if (autoplay) await playPlayerFromGesture(player);
       if (autoplay) recordMediaPlay(record.id).catch((error) => console.warn("Could not update recent plays:", error));
       updatePlayerControls();
       savePlayerState(true);
-      setLibraryStatus(`Playing ${record.name}`);
+      setPlayerStatus("");
       if (player === videoPlayer) sampleVideoProgress(true);
     } catch (error) {
       updatePlayerControls();
       const message = `${getPlaybackErrorMessage(player, error)} Track: ${record.name}.`;
-      setLibraryStatus(message);
+      setPlayerStatus(message);
       if (player === videoPlayer) videoPlayerStatus.textContent = getPlaybackErrorMessage(player, error);
     }
   } catch (error) {
-    setLibraryStatus(`Could not open this file: ${error.message}`);
+    setPlayerStatus(`Could not open this file: ${error.message}`);
   }
 }
 
@@ -978,6 +1021,7 @@ async function stopPlayback() {
   document.querySelector("#player-equalizer-open").disabled = true;
   playerTrack.classList.remove("is-video");
   playerSubtitle.textContent = "Puffin Library";
+  setPlayerStatus("");
   document.body.classList.remove("has-player");
   try { localStorage.removeItem(PLAYER_STATE_KEY); } catch { /* Storage may be unavailable. */ }
   updatePlayerControls();
@@ -993,6 +1037,7 @@ initializePlaylistLibrary({
 window.addEventListener("puffin:metadata-updated", (event) => {
   const record = event.detail;
   if (!record) return;
+  queueArtworkCache(record);
   const queuedRecord = queueRecords.find((item) => item.id === record.id);
   if (queuedRecord) Object.assign(queuedRecord, record);
   if (record.id !== activeMediaId) return;
@@ -1021,6 +1066,7 @@ for (const player of [audioPlayer, videoPlayer]) {
     player.addEventListener(eventName, () => { updatePlayerControls(); if (player === activePlayer) updateMediaSession(); });
   }
   player.addEventListener("play", () => {
+    if (player === activePlayer) setPlayerStatus("");
     if (player === activePlayer && player === audioPlayer) {
       playbackSample = { wallTime: performance.now(), position: player.currentTime };
       startLyricsSyncLoop();
@@ -1072,7 +1118,7 @@ for (const player of [audioPlayer, videoPlayer]) {
   });
   player.addEventListener("error", () => {
     const message = getPlaybackErrorMessage(player);
-    setLibraryStatus(message);
+    setPlayerStatus(message);
     if (player === videoPlayer) videoPlayerStatus.textContent = message;
   });
 }
@@ -1081,9 +1127,10 @@ playerToggle.addEventListener("click", async () => {
   if (!activePlayer) return;
   if (activePlayer.paused) {
     try {
-      await activePlayer.play();
+      await playPlayerFromGesture(activePlayer);
+      setPlayerStatus("");
     } catch (error) {
-      setLibraryStatus(getPlaybackErrorMessage(activePlayer, error));
+      setPlayerStatus(getPlaybackErrorMessage(activePlayer, error));
     }
   } else {
     activePlayer.pause();
@@ -1193,7 +1240,10 @@ document.querySelector("#queue-clear").addEventListener("click", () => {
 });
 document.querySelector("#full-player-toggle").addEventListener("click", async () => {
   if (!activePlayer) return;
-  if (activePlayer.paused) { try { await activePlayer.play(); } catch {} }
+  if (activePlayer.paused) {
+    try { await playPlayerFromGesture(activePlayer); setPlayerStatus(""); }
+    catch (error) { setPlayerStatus(getPlaybackErrorMessage(activePlayer, error)); }
+  }
   else activePlayer.pause();
   updatePlayerControls();
 });
@@ -1220,8 +1270,8 @@ playerExpandVideo.addEventListener("click", (event) => {
 videoPlayerToggle.addEventListener("click", async () => {
   if (activePlayer !== videoPlayer) return;
   if (videoPlayer.paused) {
-    try { await videoPlayer.play(); }
-    catch (error) { videoPlayerStatus.textContent = getPlaybackErrorMessage(videoPlayer, error); }
+    try { await playPlayerFromGesture(videoPlayer); setPlayerStatus(""); }
+    catch (error) { const message = getPlaybackErrorMessage(videoPlayer, error); setPlayerStatus(message); videoPlayerStatus.textContent = message; }
   } else videoPlayer.pause();
   revealVideoControls();
   updatePlayerControls();
@@ -1430,6 +1480,8 @@ initializeStats();
 equalizerController = initializeEqualizer({ audioPlayer, videoPlayer });
 initializeWatch({ onPlay: (record, resumeTime) => startPlayback(record, resumeTime, true) });
 initializeListen({ onPlay: (record) => startPlayback(record) });
+window.addEventListener("online", cacheLibraryArtwork);
+void cacheLibraryArtwork();
 
 void (async () => {
   try {

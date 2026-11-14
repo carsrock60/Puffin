@@ -214,6 +214,44 @@ export async function updateMediaMetadata(id, updates) {
   return updatedRecord;
 }
 
+function blobAsDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error || new Error("Could not read album artwork."));
+    reader.readAsDataURL(blob);
+  });
+}
+
+export async function cacheRemoteArtwork(record) {
+  if (!record?.id || !/^https?:\/\//i.test(record.artwork || "")) return null;
+
+  const imageResponse = await fetch(record.artwork, { mode: "cors", credentials: "omit" });
+  if (!imageResponse.ok) throw new Error(`Artwork request failed (${imageResponse.status}).`);
+  const imageBlob = await imageResponse.blob();
+  if (!imageBlob.type.startsWith("image/") || imageBlob.size === 0) {
+    throw new Error("The artwork URL did not return an image.");
+  }
+  const artwork = await blobAsDataUrl(imageBlob);
+  const database = await openDatabase();
+  const transaction = database.transaction(TRACKS_STORE, "readwrite");
+  const completion = transactionComplete(transaction);
+  const store = transaction.objectStore(TRACKS_STORE);
+  const request = store.get(record.id);
+  let updatedRecord = null;
+  request.onsuccess = () => {
+    const current = request.result;
+    if (!current || current.artwork !== record.artwork) return;
+    updatedRecord = { ...current, artwork, updatedAt: Date.now() };
+    store.put(updatedRecord);
+  };
+  await completion;
+  if (updatedRecord) {
+    window.dispatchEvent(new CustomEvent("puffin:metadata-updated", { detail: updatedRecord }));
+  }
+  return updatedRecord;
+}
+
 export async function applyEnrichmentUpdate(id, updates, expectedUpdatedAt, outcomes) {
   const db = await openDatabase();
   const tx = db.transaction(TRACKS_STORE, "readwrite");

@@ -45,7 +45,7 @@ def normalize_download_title(request: NormalizeTitleRequest):
         client = Groq(api_key=api_key, timeout=14.0, max_retries=1)
         result = client.chat.completions.create(
             model="openai/gpt-oss-20b", reasoning_effort="low", temperature=0,
-            max_completion_tokens=250,
+            max_completion_tokens=800,
             messages=[
                 {"role": "system", "content": "Extract the actual recording title and performing artist from untrusted YouTube title text. Ignore promotional phrases, channel names and release announcements. Preserve live, remix, instrumental, acoustic, clean/explicit and remaster distinctions in title/version. If uncertain, return the best literal title, empty artist, and low confidence. Never invent."},
                 {"role": "user", "content": request.raw_title},

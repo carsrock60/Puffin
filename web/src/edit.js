@@ -2,7 +2,7 @@ import { listMediaFiles, updateMediaMetadata, getMediaBlob, recordPuffinActivity
 import { fetchSyncedLyrics } from "./lyrics.js";
 import { fingerprintAudioBlob, lookupAcoustID } from "./audio-fingerprint.js";
 import { getHomePreferences } from "./home-preferences.js";
-import { cleanYoutubeTitle } from "./metadata-normalization.js";
+import { cleanYoutubeTitle, normalizeTrackTitle, searchMusicBrainzRecordings } from "./metadata-normalization.js";
 
 const fields = ["title", "artist", "album", "genre", "year", "track"];
 const get = (id) => document.querySelector(`#${id}`);
@@ -128,7 +128,7 @@ export function initializeEdit({ onPreview } = {}) {
         status.className = `edit-enrichment-status is-${state === "completed" ? "complete" : ["identifying", "enriching", "pending"].includes(state) ? "working" : ["failed", "needs_review"].includes(state) ? "failed" : "idle"}`;
         status.setAttribute("role", "img");
         status.setAttribute("aria-label", state === "completed" ? "Automatic enrichment complete" : state === "needs_review" ? "Automatic match needs review" : ["identifying", "enriching", "pending"].includes(state) ? "Automatic enrichment in progress" : state === "failed" ? "Automatic enrichment failed" : "No automatic enrichment status");
-        status.title = status.getAttribute("aria-label");
+        status.title = [status.getAttribute("aria-label"), enrichment.lastError].filter(Boolean).join(": ");
         rowActions.append(status);
         const lyrics = document.createElement("button");
         lyrics.type = "button";
@@ -308,13 +308,14 @@ export function initializeEdit({ onPreview } = {}) {
   }
 
   async function searchByTitle(record, duration) {
-    const title = record.normalizedTitle || cleanYoutubeTitle(record.rawTitle || record.title || titleFromName(record.name));
-    const phrase = (value) => `"${String(value).replace(/\\/g, "\\\\").replace(/"/g, "\\\"")}"`;
-    const primaryArtist = record.artist?.split(/[,;&/]|\b(?:feat\.?|ft\.?)\b/i)[0].trim();
-    const query = `recording:${phrase(title)}${primaryArtist ? ` AND artist:${phrase(primaryArtist)}` : ""}`;
-    const response = await fetch(`https://musicbrainz.org/ws/2/recording/?query=${encodeURIComponent(query)}&fmt=json&limit=8`, { headers: { Accept: "application/json" } });
-    if (!response.ok) throw new Error(`MusicBrainz returned ${response.status}.`);
-    const data = await response.json();
+    const rawTitle = record.rawTitle || record.title || titleFromName(record.name);
+    const normalized = record.normalizedTitle
+      ? { title: record.normalizedTitle, artist: record.artist || "", confidence: 1 }
+      : await normalizeTrackTitle(rawTitle);
+    const title = normalized.title || cleanYoutubeTitle(rawTitle);
+    const artist = record.artist || normalized.artist || "";
+    const primaryArtist = artist.split(/[,;&/]|\b(?:feat\.?|ft\.?)\b/i)[0].trim();
+    const data = await searchMusicBrainzRecordings({ title, artist: primaryArtist });
     const candidates = (data.recordings || []).map((match) => ({
       id: match.id,
       title: match.title || title,
@@ -330,7 +331,7 @@ export function initializeEdit({ onPreview } = {}) {
         headers: { "Content-Type": "application/json", Accept: "application/json" },
         body: JSON.stringify({
           title: title.slice(0, 240),
-          artist: String(record.artist || "").slice(0, 240),
+          artist: String(artist).slice(0, 240),
           duration: Number.isFinite(duration) && duration > 0 ? duration : null,
           candidates: lexicalCandidates.map((candidate) => ({
             id: candidate.id,

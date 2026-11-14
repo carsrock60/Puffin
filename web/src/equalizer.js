@@ -300,6 +300,10 @@ export function initializeEqualizer({ audioPlayer, videoPlayer }) {
   render();
   return {
     frequencies: [...FREQUENCIES],
+    resumeForPlayback() {
+      if (!audioContext || audioContext.state === "running") return Promise.resolve();
+      return audioContext.resume();
+    },
     async getAnalyser(player) {
       const route = ensureAudioRoute(player);
       if (audioContext.state !== "running") await audioContext.resume();
