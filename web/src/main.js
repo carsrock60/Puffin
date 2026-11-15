@@ -182,7 +182,26 @@ themeToggle.addEventListener("click", () => {
 const libraryStatus = document.querySelector("#library-status");
 const playerRevealZone = document.querySelector("#player-reveal-zone");
 const playerDock = document.querySelector("#player-dock");
+const mainContent = document.querySelector("main");
 const mediaPlayer = document.querySelector("#media-player");
+
+function syncPlayerDockSpace() {
+  const dockHeight = playerDock.hidden ? 0 : playerDock.getBoundingClientRect().height;
+  const dockBottom = playerDock.hidden ? 0 : Number.parseFloat(getComputedStyle(playerDock).bottom) || 0;
+  const clearance = dockHeight ? Math.ceil(dockHeight + dockBottom + 16) : 0;
+  mainContent.style.setProperty("--player-dock-space", `${clearance}px`);
+}
+
+if ("ResizeObserver" in window) {
+  const playerDockResizeObserver = new ResizeObserver(syncPlayerDockSpace);
+  playerDockResizeObserver.observe(playerDock);
+  playerDockResizeObserver.observe(mediaPlayer);
+}
+const playerDockVisibilityObserver = new MutationObserver(syncPlayerDockSpace);
+playerDockVisibilityObserver.observe(playerDock, { attributes: true, attributeFilter: ["hidden"] });
+window.addEventListener("resize", syncPlayerDockSpace);
+syncPlayerDockSpace();
+
 const playerReveal = document.querySelector("#player-reveal");
 const currentMediaTitle = document.querySelector("#current-media-title");
 const audioPlayer = document.querySelector("#audio-player");
@@ -210,6 +229,7 @@ const videoCurrentTime = document.querySelector("#video-current-time");
 const videoDuration = document.querySelector("#video-duration");
 const videoVolume = document.querySelector("#video-volume");
 const videoSpeed = document.querySelector("#video-speed");
+const videoSubtitlesToggle = document.querySelector("#video-subtitles-toggle");
 const videoFullscreenToggle = document.querySelector("#video-fullscreen-toggle");
 const videoPlayerStatus = document.querySelector("#video-player-status");
 const videoTheaterControls = document.querySelector("#video-theater-controls");
@@ -231,6 +251,9 @@ playerArtwork.addEventListener("error", () => {
 let activeMediaId = null;
 let activeMediaRecord = null;
 let activeObjectUrl = null;
+let activeSubtitleUrl = null;
+let activeSubtitleElement = null;
+let activeSubtitleTrack = null;
 let activePlayer = null;
 let isSeeking = false;
 let isVideoSeeking = false;
@@ -755,6 +778,45 @@ function updateVideoTheaterControls() {
   videoFullscreenToggle.setAttribute("aria-pressed", String(fullscreen));
 }
 
+function updateVideoSubtitleButton() {
+  const showing = Boolean(activeSubtitleTrack && activeSubtitleTrack.mode === "showing");
+  videoSubtitlesToggle.hidden = !activeSubtitleTrack;
+  videoSubtitlesToggle.setAttribute("aria-pressed", String(showing));
+  videoSubtitlesToggle.setAttribute("aria-label", showing ? "Turn subtitles off" : "Turn subtitles on");
+  videoSubtitlesToggle.title = showing ? "Turn subtitles off" : "Turn subtitles on";
+}
+
+function clearVideoSubtitles() {
+  if (activeSubtitleElement) activeSubtitleElement.remove();
+  if (activeSubtitleUrl) URL.revokeObjectURL(activeSubtitleUrl);
+  activeSubtitleElement = null;
+  activeSubtitleTrack = null;
+  activeSubtitleUrl = null;
+  updateVideoSubtitleButton();
+}
+
+function attachVideoSubtitles(record) {
+  clearVideoSubtitles();
+  if (record.kind !== "video" || !record.subtitles) return;
+  activeSubtitleUrl = URL.createObjectURL(new Blob([record.subtitles], { type: "text/vtt;charset=utf-8" }));
+  const trackElement = document.createElement("track");
+  trackElement.kind = "subtitles";
+  trackElement.label = "English";
+  trackElement.srclang = record.subtitleLanguage || "en";
+  trackElement.default = true;
+  trackElement.src = activeSubtitleUrl;
+  trackElement.addEventListener("load", () => {
+    if (activeSubtitleElement !== trackElement || !activeSubtitleTrack) return;
+    activeSubtitleTrack.mode = "showing";
+    updateVideoSubtitleButton();
+  });
+  activeSubtitleElement = trackElement;
+  videoPlayer.append(trackElement);
+  activeSubtitleTrack = trackElement.track;
+  activeSubtitleTrack.mode = "showing";
+  updateVideoSubtitleButton();
+}
+
 function getStandardFullscreenElement() {
   return document.fullscreenElement || document.webkitFullscreenElement || null;
 }
@@ -936,6 +998,7 @@ async function startPlayback(record, startTime = 0, openVideo = false, autoplay 
 
     audioPlayer.pause();
     videoPlayer.pause();
+    clearVideoSubtitles();
     audioPlayer.removeAttribute("src");
     videoPlayer.removeAttribute("src");
     audioPlayer.load();
@@ -981,6 +1044,7 @@ async function startPlayback(record, startTime = 0, openVideo = false, autoplay 
     otherPlayer.hidden = true;
     player.hidden = false;
     player.src = activeObjectUrl;
+    if (player === videoPlayer) attachVideoSubtitles(record);
     player.playbackRate = 1;
     player.defaultPlaybackRate = 1;
     playerSpeed.value = "1";
@@ -1028,6 +1092,7 @@ async function stopPlayback() {
   sampleListeningTime(activePlayer);
   audioPlayer.pause();
   videoPlayer.pause();
+  clearVideoSubtitles();
   await flushListeningTime();
   if (videoTheater.open) await closeVideoTheater();
   else if (isVideoFullscreenActive()) await exitVideoFullscreen();
@@ -1312,6 +1377,13 @@ videoPlayerToggle.addEventListener("click", async () => {
   } else videoPlayer.pause();
   revealVideoControls();
   updatePlayerControls();
+});
+videoSubtitlesToggle.addEventListener("click", () => {
+  if (!activeSubtitleTrack) return;
+  activeSubtitleTrack.mode = activeSubtitleTrack.mode === "showing" ? "hidden" : "showing";
+  updateVideoSubtitleButton();
+  revealVideoControls();
+  scheduleVideoControlsHide();
 });
 videoVolume.addEventListener("input", () => { videoPlayer.volume = Number(videoVolume.value); });
 videoSpeed.addEventListener("change", () => {

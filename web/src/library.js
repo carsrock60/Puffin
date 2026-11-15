@@ -132,10 +132,12 @@ export async function saveMediaFile(file, metadata = {}) {
     type: getMediaMimeType(name, mimeType),
     kind: getMediaKind(name, mimeType),
     artwork: metadata.artwork || "",
+    subtitles: metadata.subtitles || "",
+    subtitleLanguage: metadata.subtitleLanguage || "en",
     rawTitle: metadata.rawTitle || name.replace(/\.[^.]+$/, ""),
     metadataSources: { title: "embedded", artist: "embedded", album: "embedded", albumArtist: "embedded", genre: "embedded", year: "embedded", artwork: metadata.artwork ? "embedded" : "embedded", syncedLyrics: "embedded" },
     enrichment: metadata.enrichment || null,
-    size: file.size,
+    size: file.size + new Blob([metadata.subtitles || ""]).size,
     lastModified: file.lastModified || Date.now(),
     importedAt: Date.now(),
   };

@@ -260,10 +260,12 @@ export function initializeDownloader() {
   const piAddress = document.querySelector("#settings-pi-address");
   const youtubeUrl = document.querySelector("#youtube-url");
   const youtubeLinkField = document.querySelector("#youtube-link-field");
+  const downloadLinkRow = document.querySelector("#download-link-row");
   const downloadSourceLink = document.querySelector("#download-source-link");
   const downloadSourceBrowse = document.querySelector("#download-source-browse");
   const downloadFormatField = document.querySelector("#download-format-field");
   const youtubeBrowsePanel = document.querySelector("#youtube-browse-panel");
+  const youtubeSearchRow = youtubeBrowsePanel.querySelector(".youtube-search-row");
   const youtubeSearchQuery = document.querySelector("#youtube-search-query");
   const youtubeSearchButton = document.querySelector("#youtube-search-button");
   const youtubeSearchStatus = document.querySelector("#youtube-search-status");
@@ -272,6 +274,18 @@ export function initializeDownloader() {
   const youtubeSelectedTitle = document.querySelector("#youtube-selected-title");
   const youtubeClearSelection = document.querySelector("#youtube-clear-selection");
   const downloadKind = document.querySelector("#download-kind");
+  const videoQualityField = document.querySelector("#video-quality-field");
+  const videoQuality = document.querySelector("#video-quality");
+  const videoQualityValue = document.querySelector("#video-quality-value");
+  const videoQualities = [240, 360, 480, 720, 1080, 1440, 2160];
+  function updateVideoQuality() {
+    const index = Number(videoQuality.value);
+    videoQualityValue.value = index === 6 ? "4K" : `${videoQualities[index]}p`;
+    videoQuality.style.setProperty("--quality-color", `hsl(${120 - index * 20} 70% 42%)`);
+    videoQuality.style.setProperty("--quality-progress", `${index / 6 * 100}%`);
+  }
+  videoQuality.addEventListener("input", updateVideoQuality);
+  updateVideoQuality();
   const submitButton = document.querySelector("#start-download");
   const cancelButton = document.querySelector("#cancel-download");
   const progress = document.querySelector("#download-progress");
@@ -386,6 +400,8 @@ export function initializeDownloader() {
     youtubeLinkField.hidden = browsing;
     downloadFormatField.hidden = browsing;
     youtubeBrowsePanel.hidden = !browsing;
+    if (browsing) youtubeSearchRow.after(videoQualityField);
+    else downloadLinkRow.after(videoQualityField);
     downloadSourceBrowse.hidden = false;
     downloadLinkLabel.textContent = "YouTube link or search phrase";
     youtubeUrl.placeholder = "Paste a YouTube link or search, e.g. Apollo 11 highlights";
@@ -510,7 +526,7 @@ export function initializeDownloader() {
     youtubeUrl.value = "";
       youtubeSelectedVideo.hidden = true;
       selectedBrowseVideo = false;
-      youtubeSearchStatus.textContent = "Search YouTube and choose audio or video from a result.";
+      youtubeSearchStatus.textContent = "";
   });
   youtubeUrl.addEventListener("input", () => {
     if (downloadSource === "link") {
@@ -533,7 +549,7 @@ export function initializeDownloader() {
 
   function applyDownloadPreferences() {
     setDownloadSource(downloadSource);
-    setStatus(status, "Downloads run through your Raspberry Pi. Enter a YouTube link or search phrase, or browse YouTube.");
+    setStatus(status, "");
   }
   window.addEventListener("puffin:download-preferences-updated", applyDownloadPreferences);
   applyDownloadPreferences();
@@ -583,6 +599,7 @@ export function initializeDownloader() {
         body: JSON.stringify({
           url: downloadTarget,
           kind: requestedKind,
+          video_height: videoQualities[Number(videoQuality.value)],
           supported_audio_formats: requestedKind === "audio" ? getSupportedAudioFormats() : [],
         }),
       });
@@ -628,7 +645,7 @@ export function initializeDownloader() {
 
       try {
         await guardReadyPiDownload({
-          fileSize: currentJob.size,
+          fileSize: currentJob.size + (currentJob.subtitle_size || 0),
           assertCapacity: assertMediaStorageCapacity,
           cancelDownload: () => cancelPiDownload(baseUrl, jobId),
         });
@@ -678,7 +695,30 @@ export function initializeDownloader() {
         // IndexedDB can still save the file when persistent storage is unavailable.
       }
       const artwork = currentJob.kind === "video" ? await videoFrameArtwork(mediaBlob) : "";
-      const savedRecord = await saveMediaFile(mediaBlob, { name: filename, type: currentJob.mime_type || mediaBlob.type, artwork, rawTitle: filename.replace(/\.[^.]+$/, "") });
+      let subtitles = "";
+      if (currentJob.kind === "video" && currentJob.subtitles_available) {
+        try {
+          const subtitleResponse = await fetch(`${baseUrl}/api/downloads/${jobId}/subtitles`, { signal: activeDownload.controller.signal });
+          if (subtitleResponse.ok) {
+            const subtitleText = await subtitleResponse.text();
+            if (/^\uFEFF?WEBVTT(?:\s|$)/i.test(subtitleText)) subtitles = subtitleText;
+            else console.warn("The Pi returned an invalid WebVTT subtitle file.");
+          } else if (subtitleResponse.status !== 404) {
+            console.warn(`Could not receive subtitles from the Pi (${subtitleResponse.status}).`);
+          }
+        } catch (subtitleError) {
+          if (subtitleError.name === "AbortError") throw subtitleError;
+          console.warn("Could not receive subtitles from the Pi:", subtitleError);
+        }
+      }
+      const savedRecord = await saveMediaFile(mediaBlob, {
+        name: filename,
+        type: currentJob.mime_type || mediaBlob.type,
+        artwork,
+        subtitles,
+        subtitleLanguage: "en",
+        rawTitle: filename.replace(/\.[^.]+$/, ""),
+      });
       if (savedRecord.kind === "audio") window.dispatchEvent(new CustomEvent("puffin:download-saved", { detail: savedRecord }));
       savedLocally = true;
       recordPuffinActivity("downloads").catch((statsError) => console.warn("Could not record completed download:", statsError));

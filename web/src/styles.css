@@ -135,7 +135,7 @@ main {
   display: block;
   flex: 1;
   width: 100%;
-  padding: 36px clamp(20px, 4vw, 64px) 48px;
+  padding: 36px clamp(20px, 4vw, 64px) calc(48px + var(--player-dock-space, 0px));
 }
 
 .panel {
@@ -344,6 +344,17 @@ main {
 
 .download-form { display: grid; gap: 18px; max-width: 760px; margin-top: 24px; }
 .download-link-row { display: grid; grid-template-columns: minmax(0, 1fr) 170px; align-items: end; gap: 12px; }
+.video-quality { display: grid; gap: 8px; color: var(--muted); font-size: .9rem; font-weight: 600; }
+.video-quality output { float: right; color: var(--text); }
+.video-quality input { width: 100%; height: 28px; margin: 0; appearance: none; -webkit-appearance: none; background: transparent; cursor: pointer; }
+.video-quality input::-webkit-slider-runnable-track { height: 6px; border-radius: 999px; background: linear-gradient(to right, var(--quality-color) var(--quality-progress), var(--border) var(--quality-progress)); }
+.video-quality input::-webkit-slider-thumb { width: 20px; height: 20px; margin-top: -7px; appearance: none; -webkit-appearance: none; border: 2px solid var(--surface); border-radius: 50%; background: var(--quality-color); box-shadow: 0 1px 5px #0003; }
+.video-quality input::-moz-range-track { height: 6px; border-radius: 999px; background: var(--border); }
+.video-quality input::-moz-range-progress { height: 6px; border-radius: 999px; background: var(--quality-color); }
+.video-quality input::-moz-range-thumb { width: 16px; height: 16px; border: 2px solid var(--surface); border-radius: 50%; background: var(--quality-color); box-shadow: 0 1px 5px #0003; }
+.video-quality input:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+.video-quality-labels { display: flex; justify-content: space-between; gap: 2px; font-size: .7rem; font-weight: 400; }
+#youtube-search-status:empty, #download-status:empty { display: none; }
 .download-source-switch { display: inline-flex; width: max-content; max-width: 100%; padding: 4px; background: var(--page); border: 1px solid var(--border); border-radius: 999px; }
 .download-source-switch button { min-height: 38px; padding: 0 16px; color: var(--muted); background: transparent; border: 0; border-radius: 999px; cursor: pointer; font: inherit; font-size: 0.88rem; font-weight: 600; }
 .download-source-switch button.is-selected { color: var(--accent-contrast); background: var(--accent); }
@@ -529,7 +540,6 @@ body.dark .player-reveal { background: rgba(30, 36, 40, 0.9); box-shadow: 0 -6px
 }
 .player-bar[hidden], .player-artwork[hidden], .player-video[hidden] { display: none; }
 body.dark .player-bar { background: rgba(30, 36, 40, 0.84); box-shadow: 0 -10px 32px #0003; }
-body.has-player main { padding-bottom: 132px; }
 .player-track { display: flex; min-width: 0; align-items: center; gap: 12px; }
 .player-artwork, .player-video { display: block; flex: 0 0 58px; width: 58px; height: 58px; object-fit: cover; background: var(--accent-soft); border-radius: 12px; box-shadow: 0 4px 14px #0002; }
 .player-video { cursor: zoom-in; }
@@ -568,6 +578,8 @@ body.has-player main { padding-bottom: 132px; }
 .video-theater-close { margin-left: auto; font-size: 1.55rem; }
 .video-theater-stage { position: absolute; inset: 0; display: grid; min-height: 0; place-items: center; }
 .video-theater .player-video { position: absolute; inset: 0; width: 100%; height: 100%; max-height: none; flex: none; object-fit: contain; background: #000; border-radius: 0; box-shadow: none; cursor: auto; }
+.video-theater .player-video::cue { color: #fff; background-color: transparent; text-shadow: 0 1px 3px #000, 1px 0 2px #000, -1px 0 2px #000; }
+.player-video::cue { background-color: transparent; }
 .video-theater-controls { position: absolute; z-index: 3; right: 0; bottom: 0; left: 0; display: grid; gap: 8px; padding: 12px clamp(16px, 4vw, 44px) max(18px, env(safe-area-inset-bottom)); background: linear-gradient(0deg, #080b0ef5, #080b0eb8 66%, transparent); opacity: 1; transition: opacity .2s ease; }
 .video-theater.is-controls-hidden .video-theater-controls, .video-theater.is-controls-hidden .video-theater-header { opacity: 0; pointer-events: none; }
 .video-theater-timeline { display: grid; grid-template-columns: 44px minmax(0, 1fr) 44px; align-items: center; gap: 10px; color: #ffffffb5; font-size: .75rem; font-variant-numeric: tabular-nums; }
@@ -576,6 +588,8 @@ body.has-player main { padding-bottom: 132px; }
 .video-theater-control-row { display: flex; align-items: center; gap: 14px; }
 .video-control-button { display: grid; width: 44px; height: 44px; flex: 0 0 44px; place-items: center; padding: 0; color: white; background: #ffffff12; border: 1px solid #ffffff25; border-radius: 50%; cursor: pointer; font-size: 1rem; }
 .video-control-play { background: var(--accent); border-color: transparent; }
+.video-control-subtitles { font-size: .76rem; font-weight: 750; letter-spacing: -.04em; }
+.video-control-subtitles[aria-pressed="true"] { background: #ffffff32; border-color: #ffffff80; }
 .video-volume-control { display: flex; width: min(190px, 25vw); align-items: center; gap: 10px; color: #ffffffb5; }
 .video-volume-control input { min-height: 40px; }
 .video-speed-control { display: flex; align-items: center; gap: 8px; margin-left: auto; color: #ffffffa8; font-size: .76rem; }
@@ -992,7 +1006,7 @@ body.dark .media-action.danger:hover { background: #48282b; }
   .nav-button:focus-visible, .icon-button:focus-visible, .media-action:focus-visible { outline-offset: 1px; }
   .workspace { grid-row: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
   .topbar { min-height: 56px; padding: max(6px, env(safe-area-inset-top)) 12px 6px; }
-  main { padding: 24px 18px 36px; }
+  main { padding: 24px 18px calc(36px + var(--player-dock-space, 0px)); }
   .recently-played-list { gap: 12px; }
   .recently-played-item { flex-basis: 132px; }
   .music-picks-list { grid-template-columns: 1fr; }
@@ -1052,7 +1066,6 @@ body.dark .media-action.danger:hover { background: #48282b; }
   .youtube-result-thumbnail { width: 88px; grid-row: span 2; }
   .youtube-result-actions { grid-column: 2; flex-direction: row; flex-wrap: wrap; }
   .youtube-selected-video { align-items: flex-start; flex-direction: column; }
-  body.has-player main { padding-bottom: calc(160px + env(safe-area-inset-bottom)); }
   .player-dock {
     right: 8px;
     bottom: max(8px, env(safe-area-inset-bottom));

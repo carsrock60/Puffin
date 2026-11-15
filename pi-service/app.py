@@ -243,10 +243,15 @@ def _make_compatible_mp4(path: Path, job: dict, separate_audio: Path | None = No
     return output_path
 
 
-def _video_format_options() -> list[str]:
+def _video_format_options(height: int = 720) -> list[str]:
+    # Prefer a combined MP4 at the requested resolution. If unavailable,
+    # choose the best compatible separate streams up to that resolution.
+    combined = f"b[ext=mp4][height={height}][vcodec~='^(avc1|h264)'][acodec~='^(mp4a|aac)']"
+    separate = f"bv[height<={height}][vcodec~='^(avc1|h264)']+ba[acodec~='^(mp4a|aac)']"
+    fallback = f"b[ext=mp4][height<={height}][vcodec~='^(avc1|h264)'][acodec~='^(mp4a|aac)']"
     return [
         "--format",
-        "bv[vcodec~='^(avc1|h264)']+ba[acodec~='^(mp4a|aac)']/b[vcodec~='^(avc1|h264)'][acodec~='^(mp4a|aac)']",
+        f"{combined}/{separate}/{fallback}",
         "--merge-output-format",
         "mp4",
     ]
@@ -263,6 +268,8 @@ def _public_job(job: dict) -> dict:
         "filename": job.get("filename"),
         "size": job.get("size"),
         "mime_type": job.get("mime_type"),
+        "subtitles_available": bool(job.get("subtitle_path")),
+        "subtitle_size": job.get("subtitle_size", 0),
         "error": job.get("error"),
     }
 
@@ -326,7 +333,6 @@ def _run_download(job_id: str) -> None:
         "--progress",
         "--no-write-info-json",
         "--no-write-thumbnail",
-        "--no-write-subs",
         "--no-overwrites",
         "--retry-sleep",
         "http:linear=1:5",
@@ -346,7 +352,17 @@ def _run_download(job_id: str) -> None:
             "bestaudio",
         ])
     else:
-        command.extend(_video_format_options())
+        command.extend([
+            "--write-subs",
+            "--write-auto-subs",
+            "--sub-langs",
+            "en.*",
+            "--sub-format",
+            "vtt/best",
+            "--convert-subs",
+            "vtt",
+        ])
+        command.extend(_video_format_options(job.get("video_height", 720)))
     command.append(job["url"])
 
     process = None
@@ -422,9 +438,20 @@ def _run_download(job_id: str) -> None:
             if job["kind"] == "audio":
                 raise DownloadFailure(download_error)
 
+        subtitle_files = [
+            path for path in work_dir.iterdir()
+            if path.is_file() and path.suffix.lower() == ".vtt" and path.stat().st_size <= 5 * 1024 * 1024
+        ]
+        subtitle_files.sort(key=lambda path: (
+            0 if path.stem.lower().endswith(".en") else 1,
+            0 if ".en-" in path.stem.lower() else 1,
+            -path.stat().st_mtime,
+        ))
+        subtitle_file = subtitle_files[0] if subtitle_files else None
         output_files = [
             path for path in work_dir.iterdir()
-            if path.is_file() and not path.name.endswith((".part", ".ytdl", ".json", ".jpg", ".webp"))
+            if path.is_file() and path.suffix.lower() != ".vtt"
+            and not path.name.endswith((".part", ".ytdl", ".json", ".jpg", ".webp"))
         ]
         if not output_files:
             raise DownloadFailure(download_error or "yt-dlp finished but did not create a media file. Check the Pi service logs for details.")
@@ -489,6 +516,8 @@ def _run_download(job_id: str) -> None:
                 "file_path": str(output_file),
                 "size": output_size,
                 "mime_type": AUDIO_MIME_TYPES.get(output_file.suffix.lower().lstrip(".")) if job["kind"] == "audio" else (mimetypes.guess_type(output_file.name)[0] or "application/octet-stream"),
+                "subtitle_path": str(subtitle_file) if subtitle_file else None,
+                "subtitle_size": subtitle_file.stat().st_size if subtitle_file else 0,
                 "ready_at": time.time(),
                 "updated_at": time.time(),
             })
@@ -649,6 +678,10 @@ class PuffinHandler(BaseHTTPRequestHandler):
             self._send_job_file(path_parts[2])
             return
 
+        if len(path_parts) == 4 and path_parts[:2] == ["api", "downloads"] and path_parts[3] == "subtitles":
+            self._send_job_subtitles(path_parts[2])
+            return
+
         self._json(404, {"error": "Endpoint not found."})
 
     def _send_job_file(self, job_id: str) -> None:
@@ -690,6 +723,43 @@ class PuffinHandler(BaseHTTPRequestHandler):
                 if current_job:
                     current_job["transfers"] = max(0, current_job["transfers"] - 1)
 
+    def _send_job_subtitles(self, job_id: str) -> None:
+        with JOBS_LOCK:
+            job = JOBS.get(job_id)
+            if not job or job["status"] != "ready":
+                self._json(409, {"error": "The download is not ready."})
+                return
+            subtitle_path = job.get("subtitle_path")
+            if not subtitle_path:
+                self._json(404, {"error": "No English subtitles were available for this video."})
+                return
+            subtitle_file = Path(subtitle_path)
+            size = subtitle_file.stat().st_size if subtitle_file.exists() else 0
+            job["transfers"] += 1
+
+        try:
+            with subtitle_file.open("rb") as subtitle_stream:
+                self.send_response(200)
+                self._cors_headers()
+                self.send_header("Content-Type", "text/vtt; charset=utf-8")
+                self.send_header("Content-Length", str(size))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                while True:
+                    chunk = subtitle_stream.read(64 * 1024)
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+        except FileNotFoundError:
+            self._json(410, {"error": "The temporary subtitle file has expired."})
+        except (BrokenPipeError, ConnectionResetError):
+            LOGGER.info("Subtitle transfer for job %s was interrupted; keeping the temporary file for retry.", job_id)
+        finally:
+            with JOBS_LOCK:
+                current_job = JOBS.get(job_id)
+                if current_job:
+                    current_job["transfers"] = max(0, current_job["transfers"] - 1)
+
     def do_POST(self) -> None:
         if self._reject_origin():
             return
@@ -721,6 +791,10 @@ class PuffinHandler(BaseHTTPRequestHandler):
             self._json(400, {"error": "Choose audio (M4A) or video (MP4)."})
             return
         requested_audio_formats = request.get("supported_audio_formats", [])
+        video_height = request.get("video_height", 720)
+        if type(video_height) is not int or video_height not in {240, 360, 480, 720, 1080, 1440, 2160}:
+            self._json(400, {"error": "Choose a valid video quality."})
+            return
         if not isinstance(requested_audio_formats, list):
             requested_audio_formats = []
         supported_audio_formats = [
@@ -761,6 +835,7 @@ class PuffinHandler(BaseHTTPRequestHandler):
                 "url": url,
                 "kind": kind,
                 "supported_audio_formats": supported_audio_formats,
+                "video_height": video_height,
                 "status": "queued",
                 "progress": 0,
                 "speed": None,

@@ -177,7 +177,12 @@
                   </label>
                   <button id="youtube-search-button" class="secondary-button" type="button">Search</button>
                 </div>
-                <p id="youtube-search-status" class="muted" role="status" aria-live="polite">Search YouTube, then choose a result to download.</p>
+                <label id="video-quality-field" class="video-quality" for="video-quality">
+                  <span>Video quality <output id="video-quality-value" for="video-quality">720p</output></span>
+                  <input id="video-quality" type="range" min="0" max="6" step="1" value="3" />
+                  <span class="video-quality-labels" aria-hidden="true"><span>240p</span><span>360p</span><span>480p</span><span>720p</span><span>1080p</span><span>1440p</span><span>4K</span></span>
+                </label>
+                <p id="youtube-search-status" class="muted" role="status" aria-live="polite"></p>
                 <div id="youtube-selected-video" class="youtube-selected-video" hidden>
                   <span id="youtube-selected-title"></span>
                   <button id="youtube-clear-selection" class="secondary-button" type="button">Choose another</button>
@@ -188,7 +193,7 @@
               <button class="secondary-button" id="cancel-download" type="button" hidden>Cancel download</button>
               <progress id="download-progress" max="100" value="0" hidden></progress>
               <p id="download-transfer-details" class="download-transfer-details" hidden></p>
-              <p id="download-status" class="muted" role="status" aria-live="polite">Downloads run through your Raspberry Pi. Enter a YouTube link or search phrase, or browse YouTube.</p>
+              <p id="download-status" class="muted" role="status" aria-live="polite"></p>
               <section class="csv-download-section" aria-labelledby="csv-download-title">
                 <h2 id="csv-download-title">Bulk download from CSV</h2>
                 <p class="muted">Choose a CSV with columns Track Name, Artist Name, and Album. Download all data rows or specify data row numbers (header excluded), such as 1,3-5.</p>
@@ -422,6 +427,7 @@
             <button id="video-player-toggle" class="video-control-button video-control-play" type="button" aria-label="Play video" title="Play">▶</button>
             <label class="video-volume-control"><span aria-hidden="true">◖))</span><input id="video-volume" type="range" min="0" max="1" value="1" step="0.05" aria-label="Video volume" /></label>
             <label class="video-speed-control"><span>Speed</span><select id="video-speed" aria-label="Video playback speed"><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="0.75">0.75×</option><option value="1" selected>1×</option><option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="1.75">1.75×</option><option value="2">2×</option></select></label>
+            <button id="video-subtitles-toggle" class="video-control-button video-control-subtitles" type="button" aria-label="Turn subtitles off" aria-pressed="true" title="Turn subtitles off" hidden>CC</button>
             <button id="video-fullscreen-toggle" class="video-control-button video-fullscreen-button" type="button" aria-label="Enter fullscreen" title="Enter fullscreen">⛶</button>
           </div>
           <p id="video-player-status" class="video-player-status" role="status" aria-live="polite"></p>
