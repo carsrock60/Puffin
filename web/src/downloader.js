@@ -262,6 +262,7 @@ export function initializeDownloader() {
   const youtubeLinkField = document.querySelector("#youtube-link-field");
   const downloadSourceLink = document.querySelector("#download-source-link");
   const downloadSourceBrowse = document.querySelector("#download-source-browse");
+  const downloadFormatField = document.querySelector("#download-format-field");
   const youtubeBrowsePanel = document.querySelector("#youtube-browse-panel");
   const youtubeSearchQuery = document.querySelector("#youtube-search-query");
   const youtubeSearchButton = document.querySelector("#youtube-search-button");
@@ -383,6 +384,7 @@ export function initializeDownloader() {
     downloadSource = source;
     const browsing = source === "browse";
     youtubeLinkField.hidden = browsing;
+    downloadFormatField.hidden = browsing;
     youtubeBrowsePanel.hidden = !browsing;
     downloadSourceBrowse.hidden = false;
     downloadLinkLabel.textContent = "YouTube link or search phrase";

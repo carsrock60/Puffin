@@ -631,11 +631,49 @@ function setPlayerStatus(message) {
   setLibraryStatus(message);
 }
 
+function setAudioSessionForPlayback(recoverStaleSession = false) {
+  const session = navigator.audioSession;
+  if (!session) return;
+  try {
+    if (recoverStaleSession && session.type === "playback") {
+      // Reset a stale WebKit audio-session category before requesting audio
+      // again. Some iOS sessions stop routing sound after a PWA is backgrounded.
+      session.type = "ambient";
+      window.setTimeout(() => {
+        try { session.type = "playback"; } catch { /* The API is optional. */ }
+      }, 0);
+    } else {
+      session.type = "playback";
+    }
+  } catch { /* Audio Session is not available in every browser. */ }
+}
+
 function playPlayerFromGesture(player) {
   // Resume a Web Audio route and request media playback in the same user
   // gesture. iOS can suspend AudioContext when the PWA is backgrounded.
+  setAudioSessionForPlayback();
   const resumePromise = equalizerController?.resumeForPlayback?.() || Promise.resolve();
-  return Promise.all([player.play(), resumePromise]);
+  // WebKit can leave a PWA media element bound to a stale resource after a
+  // standalone app is reopened. Re-select the current Blob URL immediately
+  // before a fresh start; avoid resetting it when resuming mid-track.
+  if (player === activePlayer && activeObjectUrl && player.paused
+      && (!Number.isFinite(player.currentTime) || player.currentTime < 0.05)) {
+    player.removeAttribute("src");
+    player.src = activeObjectUrl;
+  }
+  const startTime = Number.isFinite(player.currentTime) ? player.currentTime : 0;
+  const playPromise = player.play();
+  const requestId = playbackRequestId;
+  window.setTimeout(() => {
+    if (requestId !== playbackRequestId || player !== activePlayer || player.paused) return;
+    if (player.currentTime <= startTime + 0.05) {
+      const errorCode = player.error?.code || "none";
+      setAudioSessionForPlayback(true);
+      player.pause();
+      setPlayerStatus(`Playback stalled (media state ${player.readyState}, error ${errorCode}). Tap Play to retry.`);
+    }
+  }, 3000);
+  return Promise.all([playPromise, resumePromise]);
 }
 
 function updatePlayerControls() {
@@ -943,7 +981,6 @@ async function startPlayback(record, startTime = 0, openVideo = false, autoplay 
     otherPlayer.hidden = true;
     player.hidden = false;
     player.src = activeObjectUrl;
-    player.load();
     player.playbackRate = 1;
     player.defaultPlaybackRate = 1;
     playerSpeed.value = "1";

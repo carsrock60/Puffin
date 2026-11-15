@@ -348,7 +348,7 @@ main {
 .download-source-switch button { min-height: 38px; padding: 0 16px; color: var(--muted); background: transparent; border: 0; border-radius: 999px; cursor: pointer; font: inherit; font-size: 0.88rem; font-weight: 600; }
 .download-source-switch button.is-selected { color: var(--accent-contrast); background: var(--accent); }
 .download-source-switch button:focus-visible, .youtube-result-download:focus-visible, .youtube-result-formats button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
-#youtube-link-field[hidden], .youtube-browse-panel[hidden], .youtube-selected-video[hidden] { display: none; }
+#youtube-link-field[hidden], #download-format-field[hidden], .youtube-browse-panel[hidden], .youtube-selected-video[hidden] { display: none; }
 .youtube-browse-panel { display: grid; gap: 12px; }
 .youtube-search-row { display: flex; align-items: flex-end; gap: 10px; }
 .youtube-search-row .form-field { min-width: 0; }
