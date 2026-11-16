@@ -1,4 +1,5 @@
 import unittest
+import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -46,6 +47,28 @@ class VideoPipelineTests(unittest.TestCase):
         self.assertIn("H.264", message)
         self.assertIn("AAC", message)
         self.assertIn("will not re-encode", message)
+
+
+class SubtitleSelectionTests(unittest.TestCase):
+    def test_subtitle_language_is_read_from_the_sidecar_name(self):
+        self.assertEqual(app._subtitle_language_from_path(Path("Video [id].fr-CA.vtt")), "fr-CA")
+        self.assertEqual(app._subtitle_language_from_path(Path("Video [id].en-orig.vtt")), "en-orig")
+
+    def test_browser_language_is_preferred_then_english_is_the_fallback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            french = root / "Video.fr.vtt"
+            canadian_french = root / "Video.fr-CA.vtt"
+            english = root / "Video.en.vtt"
+            for path in (french, canadian_french, english):
+                path.write_text("WEBVTT\n", encoding="utf-8")
+
+            self.assertEqual(app._choose_subtitle_file([french, english, canadian_french], "fr-CA"), canadian_french)
+            self.assertEqual(app._choose_subtitle_file([french, english], "de-DE"), english)
+
+    def test_invalid_preferred_language_falls_back_to_english(self):
+        self.assertEqual(app._normalize_subtitle_language("fr-CA"), "fr-CA")
+        self.assertEqual(app._normalize_subtitle_language("../tmp"), "en")
 
 
 if __name__ == "__main__":

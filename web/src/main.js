@@ -10,6 +10,7 @@ import { initializeWatch } from "./watch.js";
 import { initializeListen } from "./listen.js";
 import { initializeEnrichment } from "./enrichment.js";
 import { renderSyncedLyrics, syncSyncedLyrics } from "./lyrics.js";
+import { createSubtitleController, parseWebVtt } from "./video-subtitles.js";
 
 const artworkCacheTasks = new Map();
 function queueArtworkCache(record) {
@@ -255,8 +256,9 @@ let activeObjectUrl = null;
 let activeSubtitleUrl = null;
 let activeSubtitleElement = null;
 let activeSubtitleTrack = null;
-let activeSubtitleCues = [];
-let activeSubtitlesEnabled = false;
+let activeSubtitleController = null;
+let lastSubtitleGapDiagnostic = null;
+let activeSubtitleLanguage = "en";
 let activePlayer = null;
 let isSeeking = false;
 let isVideoSeeking = false;
@@ -782,59 +784,42 @@ function updateVideoTheaterControls() {
 }
 
 function updateVideoSubtitleButton() {
-  const available = activeSubtitleCues.length > 0;
-  videoSubtitlesToggle.hidden = !available;
-  videoSubtitlesToggle.setAttribute("aria-pressed", String(activeSubtitlesEnabled));
-  videoSubtitlesToggle.setAttribute("aria-label", activeSubtitlesEnabled ? "Turn subtitles off" : "Turn subtitles on");
-  videoSubtitlesToggle.title = activeSubtitlesEnabled ? "Turn subtitles off" : "Turn subtitles on";
+  const available = Boolean(activeSubtitleController?.available);
+  const enabled = Boolean(activeSubtitleController?.enabled);
+  const languageName = getSubtitleLanguageName(activeSubtitleLanguage);
+  videoSubtitlesToggle.disabled = !available;
+  videoSubtitlesToggle.setAttribute("aria-pressed", String(enabled));
+  videoSubtitlesToggle.setAttribute("aria-label", available ? (enabled ? `Turn ${languageName} subtitles off` : `Turn ${languageName} subtitles on`) : "Subtitles unavailable");
+  videoSubtitlesToggle.title = available ? (enabled ? `Turn ${languageName} subtitles off` : `Turn ${languageName} subtitles on`) : "No downloadable subtitles are available";
 }
 
-function parseSubtitleTimestamp(value) {
-  const parts = value.replace(",", ".").split(":");
-  if (parts.length === 2) {
-    const minutes = Number(parts[0]);
-    const seconds = Number(parts[1]);
-    return Number.isFinite(minutes + seconds) ? minutes * 60 + seconds : NaN;
+function getSubtitleLanguageName(language) {
+  try {
+    return new Intl.DisplayNames([navigator.language || "en"], { type: "language" }).of(language) || language;
+  } catch {
+    return language;
   }
-  if (parts.length === 3) {
-    const hours = Number(parts[0]);
-    const minutes = Number(parts[1]);
-    const seconds = Number(parts[2]);
-    return Number.isFinite(hours + minutes + seconds) ? hours * 3600 + minutes * 60 + seconds : NaN;
-  }
-  return NaN;
-}
-
-function parseWebVtt(subtitles) {
-  const cues = [];
-  const decode = document.createElement("textarea");
-  for (const block of subtitles.replace(/^\uFEFF/, "").split(/\r?\n(?:[ \t]*\r?\n)+/)) {
-    const lines = block.split(/\r?\n/);
-    const timingIndex = lines.findIndex((line) => line.includes("-->"));
-    if (timingIndex < 0) continue;
-    const [startToken, endPart] = lines[timingIndex].split("-->");
-    const endToken = endPart?.trim().split(/[ \t]/, 1)[0];
-    const start = parseSubtitleTimestamp(startToken.trim());
-    const end = parseSubtitleTimestamp(endToken || "");
-    const plainText = lines.slice(timingIndex + 1).join("\n").replace(/<[^>]*>/g, "");
-    decode.innerHTML = plainText;
-    const text = decode.value.trim();
-    if (Number.isFinite(start) && Number.isFinite(end) && end > start && text) cues.push({ start, end, text });
-  }
-  return cues;
 }
 
 function updateVideoSubtitleOverlay() {
   const currentTime = videoPlayer.currentTime;
-  const currentText = activeSubtitleCues
-    .filter((cue) => currentTime >= cue.start && currentTime < cue.end)
-    .map((cue) => cue.text)
-    .join("\n");
-  const visible = activeSubtitlesEnabled && Boolean(currentText) && !videoFullscreenNative;
-  videoSubtitleOverlay.textContent = visible ? currentText : "";
-  videoSubtitleOverlay.hidden = !visible;
+  const state = activeSubtitleController?.update(currentTime) || { available: false, enabled: false, text: "", visible: false };
+  const nativeFullscreen = Boolean(videoFullscreenNative || videoPlayer.webkitDisplayingFullscreen);
+  if (Number.isFinite(currentTime) && state.enabled && state.available && !state.text) {
+    const nextCue = activeSubtitleController.cues.find((cue) => cue.start > currentTime);
+    const gapKey = nextCue ? `next:${nextCue.start}` : "after-final-cue";
+    if (gapKey !== lastSubtitleGapDiagnostic) {
+      console.debug("[Puffin subtitles] Enabled, but no cue is active at the current time.", {
+        currentTime,
+        nextCueAt: nextCue?.start ?? null,
+      });
+      lastSubtitleGapDiagnostic = gapKey;
+    }
+  } else {
+    lastSubtitleGapDiagnostic = null;
+  }
   if (activeSubtitleTrack) {
-    activeSubtitleTrack.mode = videoFullscreenNative && activeSubtitlesEnabled ? "showing" : "hidden";
+    activeSubtitleTrack.mode = nativeFullscreen && state.enabled ? "showing" : "hidden";
   }
 }
 
@@ -844,8 +829,9 @@ function clearVideoSubtitles() {
   activeSubtitleElement = null;
   activeSubtitleTrack = null;
   activeSubtitleUrl = null;
-  activeSubtitleCues = [];
-  activeSubtitlesEnabled = false;
+  activeSubtitleController = null;
+  lastSubtitleGapDiagnostic = null;
+  activeSubtitleLanguage = "en";
   videoSubtitleOverlay.textContent = "";
   videoSubtitleOverlay.hidden = true;
   updateVideoSubtitleButton();
@@ -853,22 +839,60 @@ function clearVideoSubtitles() {
 
 function attachVideoSubtitles(record) {
   clearVideoSubtitles();
-  if (record.kind !== "video" || !record.subtitles) return;
-  activeSubtitleCues = parseWebVtt(record.subtitles);
-  if (!activeSubtitleCues.length) return;
+  videoPlayerStatus.textContent = "";
+  updateVideoSubtitleButton();
+  if (record.kind !== "video" || !record.subtitles) {
+    console.info("[Puffin subtitles] No subtitle text was downloaded for this video.", { mediaId: record.id });
+    videoPlayerStatus.textContent = "No downloadable subtitles are available for this video.";
+    return;
+  }
+  activeSubtitleLanguage = record.subtitleLanguage || "en";
+  const parsed = parseWebVtt(record.subtitles);
+  if (parsed.error) {
+    console.warn("[Puffin subtitles] Subtitle file could not be parsed.", {
+      mediaId: record.id,
+      reason: parsed.error,
+      invalidCueCount: parsed.invalidCueCount,
+      characterCount: record.subtitles.length,
+    });
+    videoPlayerStatus.textContent = "This video's subtitle file has no usable captions.";
+    updateVideoSubtitleButton();
+    return;
+  }
+  activeSubtitleController = createSubtitleController(parsed.cues, ({ text, visible }) => {
+    videoSubtitleOverlay.textContent = visible ? text : "";
+    videoSubtitleOverlay.hidden = !visible || videoFullscreenNative || Boolean(videoPlayer.webkitDisplayingFullscreen);
+  });
+  console.debug("[Puffin subtitles] Parsed usable caption cues.", {
+    mediaId: record.id,
+    cueCount: parsed.cues.length,
+    invalidCueCount: parsed.invalidCueCount,
+  });
   activeSubtitleUrl = URL.createObjectURL(new Blob([record.subtitles], { type: "text/vtt;charset=utf-8" }));
   const trackElement = document.createElement("track");
   trackElement.kind = "subtitles";
-  trackElement.label = "English";
-  trackElement.srclang = record.subtitleLanguage || "en";
+  trackElement.label = getSubtitleLanguageName(activeSubtitleLanguage);
+  trackElement.srclang = activeSubtitleLanguage;
   trackElement.default = false;
   trackElement.src = activeSubtitleUrl;
   trackElement.addEventListener("load", () => {
     if (activeSubtitleElement !== trackElement || !activeSubtitleTrack) return;
+    const nativeCueCount = activeSubtitleTrack.cues?.length ?? 0;
+    const diagnostics = {
+      mediaId: record.id,
+      cueCount: nativeCueCount,
+      readyState: trackElement.readyState,
+    };
+    if (nativeCueCount) console.debug("[Puffin subtitles] Native fullscreen fallback track loaded.", diagnostics);
+    else console.warn("[Puffin subtitles] Native fallback loaded without cues; custom theater captions remain available.", diagnostics);
     updateVideoSubtitleOverlay();
   });
   trackElement.addEventListener("error", () => {
     if (activeSubtitleElement !== trackElement) return;
+    console.warn("[Puffin subtitles] Native fullscreen fallback track failed to load; theater overlay remains available.", {
+      mediaId: record.id,
+      trackReadyState: trackElement.readyState,
+    });
     activeSubtitleTrack = null;
     updateVideoSubtitleOverlay();
   });
@@ -985,6 +1009,7 @@ async function exitVideoFullscreen() {
     await Promise.race([endEvent, new Promise((resolve) => window.setTimeout(resolve, 700))]);
     videoFullscreenNative = false;
     videoPlayer.controls = false;
+    updateVideoSubtitleOverlay();
     syncFullscreenState();
   }
 }
@@ -1446,8 +1471,8 @@ videoPlayerToggle.addEventListener("click", async () => {
   updatePlayerControls();
 });
 videoSubtitlesToggle.addEventListener("click", () => {
-  if (!activeSubtitleCues.length) return;
-  activeSubtitlesEnabled = !activeSubtitlesEnabled;
+  if (!activeSubtitleController?.available) return;
+  activeSubtitleController.toggle();
   updateVideoSubtitleOverlay();
   updateVideoSubtitleButton();
   revealVideoControls();
@@ -1463,6 +1488,7 @@ videoSeek.addEventListener("pointerdown", () => { isVideoSeeking = true; });
 function commitVideoSeek() {
   if (Number.isFinite(videoPlayer.duration)) videoPlayer.currentTime = Number(videoSeek.value);
   isVideoSeeking = false;
+  updateVideoSubtitleOverlay();
   updateVideoTheaterControls();
 }
 videoSeek.addEventListener("pointerup", commitVideoSeek);

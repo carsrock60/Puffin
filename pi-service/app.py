@@ -137,6 +137,44 @@ def _safe_filename(path: Path) -> str:
     return name or "puffin-media"
 
 
+def _subtitle_language_from_path(path: Path) -> str:
+    language = path.stem.rsplit(".", 1)[-1]
+    if not re.fullmatch(r"[A-Za-z]{2,3}(?:[-_][A-Za-z0-9]{2,8})*", language):
+        return "und"
+    return language.replace("_", "-")
+
+
+def _normalize_subtitle_language(value: object) -> str:
+    if isinstance(value, str) and len(value) <= 35 and re.fullmatch(r"[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*", value.strip()):
+        return value.strip().replace("_", "-")
+    return "en"
+
+
+def _choose_subtitle_file(paths: list[Path], preferred_language: str = "en") -> Path | None:
+    if not paths:
+        return None
+    preferred = preferred_language.lower().replace("_", "-")
+    preferred_base = preferred.split("-", 1)[0]
+
+    def priority(path: Path) -> tuple[int, str, float, str]:
+        language = _subtitle_language_from_path(path).lower()
+        if language == preferred:
+            language_priority = 0
+        elif language == preferred_base or language.startswith(f"{preferred_base}-"):
+            language_priority = 1
+        elif language == "en":
+            language_priority = 2
+        elif language.startswith("en-"):
+            language_priority = 3
+        elif language == "und":
+            language_priority = 5
+        else:
+            language_priority = 4
+        return (language_priority, language, -path.stat().st_mtime, path.name.lower())
+
+    return min(paths, key=priority)
+
+
 def _ensure_supported_audio(path: Path, supported_formats: list[str], job: dict) -> Path:
     extension = path.suffix.lower().lstrip(".")
     if extension in supported_formats and extension in SUPPORTED_AUDIO_EXTENSIONS:
@@ -270,6 +308,7 @@ def _public_job(job: dict) -> dict:
         "mime_type": job.get("mime_type"),
         "subtitles_available": bool(job.get("subtitle_path")),
         "subtitle_size": job.get("subtitle_size", 0),
+        "subtitle_language": job.get("subtitle_language"),
         "error": job.get("error"),
     }
 
@@ -356,7 +395,7 @@ def _run_download(job_id: str) -> None:
             "--write-subs",
             "--write-auto-subs",
             "--sub-langs",
-            "en.*",
+            "all,-live_chat",
             "--sub-format",
             "vtt/best",
             "--convert-subs",
@@ -442,12 +481,22 @@ def _run_download(job_id: str) -> None:
             path for path in work_dir.iterdir()
             if path.is_file() and path.suffix.lower() == ".vtt" and path.stat().st_size <= 5 * 1024 * 1024
         ]
-        subtitle_files.sort(key=lambda path: (
-            0 if path.stem.lower().endswith(".en") else 1,
-            0 if ".en-" in path.stem.lower() else 1,
-            -path.stat().st_mtime,
-        ))
-        subtitle_file = subtitle_files[0] if subtitle_files else None
+        subtitle_file = _choose_subtitle_file(subtitle_files, job.get("preferred_subtitle_language", "en"))
+        subtitle_language = _subtitle_language_from_path(subtitle_file) if subtitle_file else None
+        if subtitle_file:
+            LOGGER.info(
+                "Video download job %s found subtitle languages %s; selected %s",
+                job_id,
+                ", ".join(sorted({_subtitle_language_from_path(path) for path in subtitle_files})),
+                subtitle_language,
+            )
+        else:
+            subtitle_output = [line for line in output_tail if "subtitle" in line.lower()]
+            LOGGER.info(
+                "Video download job %s found no downloadable WebVTT subtitle files; yt-dlp subtitle output: %s",
+                job_id,
+                " | ".join(subtitle_output[-5:]) or "none",
+            )
         output_files = [
             path for path in work_dir.iterdir()
             if path.is_file() and path.suffix.lower() != ".vtt"
@@ -518,6 +567,7 @@ def _run_download(job_id: str) -> None:
                 "mime_type": AUDIO_MIME_TYPES.get(output_file.suffix.lower().lstrip(".")) if job["kind"] == "audio" else (mimetypes.guess_type(output_file.name)[0] or "application/octet-stream"),
                 "subtitle_path": str(subtitle_file) if subtitle_file else None,
                 "subtitle_size": subtitle_file.stat().st_size if subtitle_file else 0,
+                "subtitle_language": subtitle_language,
                 "ready_at": time.time(),
                 "updated_at": time.time(),
             })
@@ -731,7 +781,7 @@ class PuffinHandler(BaseHTTPRequestHandler):
                 return
             subtitle_path = job.get("subtitle_path")
             if not subtitle_path:
-                self._json(404, {"error": "No English subtitles were available for this video."})
+                self._json(404, {"error": "No downloadable subtitles were available for this video."})
                 return
             subtitle_file = Path(subtitle_path)
             size = subtitle_file.stat().st_size if subtitle_file.exists() else 0
@@ -791,6 +841,7 @@ class PuffinHandler(BaseHTTPRequestHandler):
             self._json(400, {"error": "Choose audio (M4A) or video (MP4)."})
             return
         requested_audio_formats = request.get("supported_audio_formats", [])
+        preferred_subtitle_language = _normalize_subtitle_language(request.get("preferred_subtitle_language", "en"))
         video_height = request.get("video_height", 720)
         if type(video_height) is not int or video_height not in {240, 360, 480, 720, 1080, 1440, 2160}:
             self._json(400, {"error": "Choose a valid video quality."})
@@ -836,6 +887,7 @@ class PuffinHandler(BaseHTTPRequestHandler):
                 "kind": kind,
                 "supported_audio_formats": supported_audio_formats,
                 "video_height": video_height,
+                "preferred_subtitle_language": preferred_subtitle_language,
                 "status": "queued",
                 "progress": 0,
                 "speed": None,

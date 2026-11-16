@@ -4,7 +4,7 @@ Puffin is a music and video app for macOS and iOS. It is designed as a static Pr
 
 ## Download
 
-Users can paste a YouTube link or search YouTube within Puffin. Search results show video thumbnails, titles, channels, and durations; users can preview a result in YouTube or select it for download. Audio downloads preserve the source audio format when the browser supports it, with AAC in M4A as a compatibility fallback. Video downloads use H.264 video and AAC audio in MP4 for browser compatibility. Available English manual or automatic subtitles are saved with downloaded videos and can be toggled during playback.
+Users can paste a YouTube link or search YouTube within Puffin. Search results show video thumbnails, titles, channels, and durations; users can preview a result in YouTube or select it for download. Audio downloads preserve the source audio format when the browser supports it, with AAC in M4A as a compatibility fallback. Video downloads use H.264 video and AAC audio in MP4 for browser compatibility. Available manual, automatic, and translated subtitles are saved with downloaded videos in the browser's preferred language when available, and can be toggled during playback.
 
 Downloads are intended for public-domain videos or users' own videos. Users are trusted to download only content they are authorized to download.
 

@@ -600,6 +600,7 @@ export function initializeDownloader() {
           url: downloadTarget,
           kind: requestedKind,
           video_height: videoQualities[Number(videoQuality.value)],
+          preferred_subtitle_language: navigator.language || "en",
           supported_audio_formats: requestedKind === "audio" ? getSupportedAudioFormats() : [],
         }),
       });
@@ -711,13 +712,15 @@ export function initializeDownloader() {
           if (subtitleError.name === "AbortError") throw subtitleError;
           console.warn("Could not receive subtitles from the Pi:", subtitleError);
         }
+      } else if (currentJob.kind === "video") {
+        console.info("[Puffin download] The Pi found no downloadable WebVTT subtitles for this video.", { jobId });
       }
       const savedRecord = await saveMediaFile(mediaBlob, {
         name: filename,
         type: currentJob.mime_type || mediaBlob.type,
         artwork,
         subtitles,
-        subtitleLanguage: "en",
+        subtitleLanguage: currentJob.subtitle_language || "en",
         rawTitle: filename.replace(/\.f\d+(?=\.[^.]+$)/i, "").replace(/\.[^.]+$/, ""),
       });
       if (savedRecord.kind === "audio") window.dispatchEvent(new CustomEvent("puffin:download-saved", { detail: savedRecord }));
