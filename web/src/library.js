@@ -114,6 +114,15 @@ export function getMediaKind(fileName, mimeType = "") {
   return null;
 }
 
+export function getMediaDisplayTitle(record) {
+  const rawTitle = record?.title || record?.name || "Untitled media";
+  if (record?.kind !== "video") return rawTitle.replace(/\.[^.]+$/, "");
+  return rawTitle
+    .replace(/\.(?:mp4|m4v|mov|webm|ogv|mkv|avi)$/i, "")
+    .replace(/\.f\d+$/i, "")
+    .trim() || "Untitled video";
+}
+
 function getMediaMimeType(fileName, mimeType = "") {
   if (mimeType && mimeType !== "application/octet-stream") return mimeType;
   const extension = fileName.split(".").pop()?.toLowerCase();
@@ -134,7 +143,7 @@ export async function saveMediaFile(file, metadata = {}) {
     artwork: metadata.artwork || "",
     subtitles: metadata.subtitles || "",
     subtitleLanguage: metadata.subtitleLanguage || "en",
-    rawTitle: metadata.rawTitle || name.replace(/\.[^.]+$/, ""),
+    rawTitle: metadata.rawTitle || name.replace(/\.f\d+(?=\.[^.]+$)/i, "").replace(/\.[^.]+$/, ""),
     metadataSources: { title: "embedded", artist: "embedded", album: "embedded", albumArtist: "embedded", genre: "embedded", year: "embedded", artwork: metadata.artwork ? "embedded" : "embedded", syncedLyrics: "embedded" },
     enrichment: metadata.enrichment || null,
     size: file.size + new Blob([metadata.subtitles || ""]).size,

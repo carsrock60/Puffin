@@ -1,4 +1,4 @@
-import { listMediaFiles, updateMediaMetadata, getMediaBlob, recordPuffinActivity } from "./library.js";
+import { getMediaDisplayTitle, listMediaFiles, updateMediaMetadata, getMediaBlob, recordPuffinActivity } from "./library.js";
 import { fetchSyncedLyrics } from "./lyrics.js";
 import { fingerprintAudioBlob, lookupAcoustID } from "./audio-fingerprint.js";
 import { getHomePreferences } from "./home-preferences.js";
@@ -8,7 +8,7 @@ const fields = ["title", "artist", "album", "genre", "year", "track"];
 const get = (id) => document.querySelector(`#${id}`);
 
 function extension(name) { return name.match(/\.[^.]+$/)?.[0] || ""; }
-function titleFromName(name) { const suffix = extension(name); return (suffix ? name.slice(0, -suffix.length) : name).trim(); }
+function titleFromName(name) { const suffix = extension(name); return (suffix ? name.slice(0, -suffix.length) : name).replace(/\.f\d+$/i, "").trim(); }
 function formatDuration(seconds) {
   if (!Number.isFinite(seconds)) return "—";
   return `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
@@ -79,12 +79,12 @@ export function initializeEdit({ onPreview } = {}) {
     list.replaceChildren();
     records.forEach((record) => {
       const row = document.createElement("li"); row.className = "edit-media-row";
-      const check = document.createElement("input"); check.type = "checkbox"; check.checked = selected.has(record.id); check.setAttribute("aria-label", `Select ${record.title || titleFromName(record.name)}`);
+      const check = document.createElement("input"); check.type = "checkbox"; check.checked = selected.has(record.id); check.setAttribute("aria-label", `Select ${getMediaDisplayTitle(record)}`);
       check.addEventListener("change", () => { check.checked ? selected.add(record.id) : selected.delete(record.id); updateCount(); });
       const art = document.createElement("img"); art.className = "edit-artwork"; art.src = record.artwork || "/favicon.svg"; art.alt = "";
       art.addEventListener("error", () => { if (!art.src.endsWith("/favicon.svg")) art.src = "/favicon.svg"; }, { once: true });
       const artWrap = document.createElement("div"); artWrap.className = "edit-artwork-wrap";
-      const uploadButton = document.createElement("button"); uploadButton.type = "button"; uploadButton.className = "edit-artwork-upload"; uploadButton.textContent = "+"; uploadButton.title = "Change artwork"; uploadButton.setAttribute("aria-label", `Change artwork for ${record.title || titleFromName(record.name)}`);
+      const uploadButton = document.createElement("button"); uploadButton.type = "button"; uploadButton.className = "edit-artwork-upload"; uploadButton.textContent = "+"; uploadButton.title = "Change artwork"; uploadButton.setAttribute("aria-label", `Change artwork for ${getMediaDisplayTitle(record)}`);
       const imageInput = document.createElement("input"); imageInput.type = "file"; imageInput.accept = "image/*,.svg,image/svg+xml"; imageInput.hidden = true;
       uploadButton.addEventListener("click", () => imageInput.click());
       imageInput.addEventListener("change", async () => {
@@ -103,7 +103,7 @@ export function initializeEdit({ onPreview } = {}) {
       const values = document.createElement("div"); values.className = "edit-track-fields";
       const inputs = {};
       for (const key of ["title", "artist", "album"]) {
-        const input = document.createElement("input"); input.type = "text"; input.value = record[key] || (key === "title" ? titleFromName(record.name) : ""); input.placeholder = key[0].toUpperCase() + key.slice(1); input.setAttribute("aria-label", `${key} for ${titleFromName(record.name)}`); inputs[key] = input;
+        const input = document.createElement("input"); input.type = "text"; input.value = record[key] || (key === "title" ? getMediaDisplayTitle(record) : ""); input.placeholder = key[0].toUpperCase() + key.slice(1); input.setAttribute("aria-label", `${key} for ${getMediaDisplayTitle(record)}`); inputs[key] = input;
       }
       values.append(inputs.title, inputs.artist, inputs.album);
       const meta = document.createElement("div"); meta.className = "edit-track-meta";
@@ -111,7 +111,7 @@ export function initializeEdit({ onPreview } = {}) {
       const duration = document.createElement("span"); duration.textContent = "…";
       let measuredDuration = Number.isFinite(record.duration) ? record.duration : undefined;
       meta.append(detail, duration);
-      const save = document.createElement("button"); save.type = "button"; save.className = "icon-button edit-save"; save.textContent = "✓"; save.title = "Save tags"; save.setAttribute("aria-label", `Save tags for ${titleFromName(record.name)}`);
+      const save = document.createElement("button"); save.type = "button"; save.className = "icon-button edit-save"; save.textContent = "✓"; save.title = "Save tags"; save.setAttribute("aria-label", `Save tags for ${getMediaDisplayTitle(record)}`);
       save.addEventListener("click", async () => {
         save.disabled = true;
         try { await updateMediaMetadata(record.id, Object.fromEntries(Object.entries(inputs).map(([key, input]) => [key, input.value.trim()]))); recordPuffinActivity("tagEdits").catch(() => {}); await load(); say("Tags saved."); }
@@ -135,7 +135,7 @@ export function initializeEdit({ onPreview } = {}) {
         lyrics.className = "icon-button edit-lyrics-download";
         lyrics.textContent = "♫";
         lyrics.title = record.syncedLyrics ? "Refresh synchronized lyrics" : "Download synchronized lyrics";
-        lyrics.setAttribute("aria-label", `${lyrics.title} for ${record.title || titleFromName(record.name)}`);
+        lyrics.setAttribute("aria-label", `${lyrics.title} for ${getMediaDisplayTitle(record)}`);
 
         lyrics.addEventListener("click", async () => {
           const trackName = inputs.title.value.trim() || titleFromName(record.name);
@@ -222,14 +222,14 @@ export function initializeEdit({ onPreview } = {}) {
     const card = document.createElement("article");
     card.className = "smart-fill-preview-card";
     const heading = document.createElement("h3");
-    heading.textContent = record.title || titleFromName(record.name);
+    heading.textContent = getMediaDisplayTitle(record);
     const match = document.createElement("p");
     match.className = "muted smart-fill-match-summary";
     match.textContent = `${candidate.title}${candidate.artist ? ` · ${candidate.artist}` : ""} · ${candidate.source === "Fingerprint" ? `AcoustID match ${(candidate.score * 100).toFixed(1)}%` : "Title search match"}`;
     card.append(heading, match);
 
     const fieldsToPreview = [
-      ["title", "Title", record.title || titleFromName(record.name)],
+      ["title", "Title", getMediaDisplayTitle(record)],
       ["artist", "Artist", record.artist],
       ["album", "Album", record.album],
       ["year", "Year", record.year],
@@ -373,7 +373,7 @@ export function initializeEdit({ onPreview } = {}) {
       const card = document.createElement("section");
       card.className = "smart-fill-candidate-track";
       const heading = document.createElement("h3");
-      heading.textContent = track.record.title || titleFromName(track.record.name);
+      heading.textContent = getMediaDisplayTitle(track.record);
       card.append(heading);
       if (!track.candidates.length) {
         const empty = document.createElement("p");
@@ -432,7 +432,7 @@ export function initializeEdit({ onPreview } = {}) {
     try {
       for (let i = 0; i < targets.length; i += 1) {
         const record = targets[i];
-        const title = record.title || titleFromName(record.name);
+        const title = getMediaDisplayTitle(record);
         say(`Identifying ${title}… (${i + 1}/${targets.length})`);
         let duration = validDuration(record.duration);
         let candidates = [];

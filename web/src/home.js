@@ -1,7 +1,6 @@
-import { listMediaFiles, listRecentlyPlayed, listPlaylists } from "./library.js";
+import { getMediaDisplayTitle, listMediaFiles, listRecentlyPlayed, listPlaylists } from "./library.js";
 import { getHomePreferences } from "./home-preferences.js";
 
-const stripExtension = (name) => name.replace(/\.[^.]+$/, "");
 const normalize = (value) => String(value || "").trim().toLocaleLowerCase().replace(/\s+/g, " ");
 const recommendationCache = new Map();
 const artworkCache = new Map();
@@ -70,7 +69,7 @@ export function initializeHome({ onPlay, onPlayPlaylist }) {
     recentRecords = records;
     recentList.replaceChildren();
     records.forEach((record) => {
-      const title = record.title || stripExtension(record.name);
+      const title = getMediaDisplayTitle(record);
       const item = document.createElement("li");
       item.className = "recently-played-item";
       const button = document.createElement("button");
@@ -193,7 +192,7 @@ export function initializeHome({ onPlay, onPlayPlaylist }) {
       const seedArtists = new Set();
       for (const record of [...recent, ...library]) {
         const artist = record.artist?.trim();
-        const title = record.title?.trim() || stripExtension(record.name).trim();
+        const title = getMediaDisplayTitle(record).trim();
         if (!artist || !title) continue;
         const artistKey = normalize(artist);
         if (seedArtists.has(artistKey)) continue;
@@ -211,7 +210,7 @@ export function initializeHome({ onPlay, onPlayPlaylist }) {
 
       const inLibrary = new Map();
       for (const record of library) {
-        const titleKey = normalize(record.title || stripExtension(record.name));
+        const titleKey = normalize(getMediaDisplayTitle(record));
         const artistSet = inLibrary.get(titleKey) || new Set();
         artistSet.add(normalize(record.artist));
         inLibrary.set(titleKey, artistSet);

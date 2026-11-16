@@ -577,6 +577,8 @@ body.dark .player-bar { background: rgba(30, 36, 40, 0.84); box-shadow: 0 -10px 
 .video-theater-heading span { color: #ffffffa8; font-size: .8rem; }
 .video-theater-close { margin-left: auto; font-size: 1.55rem; }
 .video-theater-stage { position: absolute; inset: 0; display: grid; min-height: 0; place-items: center; }
+.video-subtitle-overlay { position: absolute; z-index: 2; right: max(5vw, 24px); bottom: clamp(88px, 15vh, 150px); left: max(5vw, 24px); color: #fff; background: transparent; font-size: clamp(1.05rem, 3vw, 1.65rem); font-weight: 650; line-height: 1.35; text-align: center; text-shadow: 0 1px 4px #000, 1px 0 3px #000, -1px 0 3px #000; white-space: pre-line; pointer-events: none; }
+.video-subtitle-overlay[hidden] { display: none; }
 .video-theater .player-video { position: absolute; inset: 0; width: 100%; height: 100%; max-height: none; flex: none; object-fit: contain; background: #000; border-radius: 0; box-shadow: none; cursor: auto; }
 .video-theater .player-video::cue { color: #fff; background-color: transparent; text-shadow: 0 1px 3px #000, 1px 0 2px #000, -1px 0 2px #000; }
 .player-video::cue { background-color: transparent; }

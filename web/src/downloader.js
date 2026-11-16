@@ -688,6 +688,7 @@ export function initializeDownloader() {
         filename = currentJob.filename;
       }
       filename = removeLastBracketedPart(filename);
+      if (currentJob.kind === "video") filename = filename.replace(/\.f\d+(?=\.[^.]+$)/i, "");
 
       try {
         if (navigator.storage?.persist) await navigator.storage.persist();
@@ -717,7 +718,7 @@ export function initializeDownloader() {
         artwork,
         subtitles,
         subtitleLanguage: "en",
-        rawTitle: filename.replace(/\.[^.]+$/, ""),
+        rawTitle: filename.replace(/\.f\d+(?=\.[^.]+$)/i, "").replace(/\.[^.]+$/, ""),
       });
       if (savedRecord.kind === "audio") window.dispatchEvent(new CustomEvent("puffin:download-saved", { detail: savedRecord }));
       savedLocally = true;

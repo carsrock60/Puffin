@@ -1,4 +1,4 @@
-import { cacheRemoteArtwork, getMediaBlob, listMediaFiles, recordMediaPlay, recordListeningTime, recordVideoWatchProgress } from "./library.js";
+import { cacheRemoteArtwork, getMediaBlob, getMediaDisplayTitle, listMediaFiles, recordMediaPlay, recordListeningTime, recordVideoWatchProgress } from "./library.js";
 import { initializeDownloader } from "./downloader.js";
 import { initializePlaylistLibrary } from "./playlist-library.js";
 import { initializeSettings } from "./settings.js";
@@ -219,6 +219,7 @@ const playerExpandVideo = document.querySelector("#player-expand-video");
 const videoTheater = document.querySelector("#video-theater");
 const videoTheaterShell = document.querySelector("#video-theater-shell");
 const videoTheaterStage = document.querySelector("#video-theater-stage");
+const videoSubtitleOverlay = document.querySelector("#video-subtitle-overlay");
 const videoTheaterTitle = document.querySelector("#video-theater-title");
 const videoTheaterSubtitle = document.querySelector("#video-theater-subtitle");
 const videoTheaterBack = document.querySelector("#video-theater-back");
@@ -254,6 +255,8 @@ let activeObjectUrl = null;
 let activeSubtitleUrl = null;
 let activeSubtitleElement = null;
 let activeSubtitleTrack = null;
+let activeSubtitleCues = [];
+let activeSubtitlesEnabled = false;
 let activePlayer = null;
 let isSeeking = false;
 let isVideoSeeking = false;
@@ -455,7 +458,7 @@ function openPlayerMode(pane = "lyrics") {
   playerFullscreen.setAttribute("aria-hidden", "false");
   playerFullscreen.classList.add("is-closing");
   requestAnimationFrame(() => requestAnimationFrame(() => playerFullscreen.classList.remove("is-closing")));
-  fullPlayerTitle.textContent = activeMediaRecord.title || activeMediaRecord.name.replace(/\.[^.]+$/, "");
+  fullPlayerTitle.textContent = getMediaDisplayTitle(activeMediaRecord);
   fullPlayerArtist.textContent = activeMediaRecord.artist || "Puffin Library";
   fullPlayerArtwork.src = activeMediaRecord.artwork || "/favicon.svg";
   setPlayerPane(pane);
@@ -500,7 +503,7 @@ function renderPlayerQueue() {
     handle.className = "queue-drag-handle";
     handle.textContent = "☰";
     handle.classList.toggle("is-dragging", record.id === dragQueueId);
-    handle.setAttribute("aria-label", `Reorder ${record.title || record.name}. Hold and drag, or use the arrow keys.`);
+    handle.setAttribute("aria-label", `Reorder ${getMediaDisplayTitle(record)}. Hold and drag, or use the arrow keys.`);
     handle.addEventListener("pointerdown", (event) => {
       event.preventDefault();
       window.clearTimeout(queueHoldTimer);
@@ -526,7 +529,7 @@ function renderPlayerQueue() {
     art.alt = "";
     const title = document.createElement("span");
     title.className = "queue-row-title";
-    title.textContent = `${record.title || record.name.replace(/\.[^.]+$/, "")} · ${record.artist || "Unknown artist"}`;
+    title.textContent = `${getMediaDisplayTitle(record)} · ${record.artist || "Unknown artist"}`;
     const play = document.createElement("button");
     play.type = "button";
     play.className = "queue-row-play";
@@ -537,7 +540,7 @@ function renderPlayerQueue() {
     actions.className = "queue-row-menu";
     const summary = document.createElement("summary");
     summary.textContent = "•••";
-    summary.setAttribute("aria-label", `Queue actions for ${record.title || record.name}`);
+    summary.setAttribute("aria-label", `Queue actions for ${getMediaDisplayTitle(record)}`);
     const menu = document.createElement("div");
     const next = document.createElement("button");
     next.type = "button";
@@ -726,7 +729,7 @@ function updateMediaSession() {
   const sizes = [96, 128, 192, 256, 384, 512];
   try {
     session.metadata = new MediaMetadata({
-      title: record.title || record.name.replace(/\.[^.]+$/, ""),
+      title: getMediaDisplayTitle(record),
       artist: record.artist || "Puffin Library",
       album: record.album || "",
       artwork: sizes.map((size) => ({ src: artwork, sizes: `${size}x${size}` })),
@@ -779,11 +782,60 @@ function updateVideoTheaterControls() {
 }
 
 function updateVideoSubtitleButton() {
-  const showing = Boolean(activeSubtitleTrack && activeSubtitleTrack.mode === "showing");
-  videoSubtitlesToggle.hidden = !activeSubtitleTrack;
-  videoSubtitlesToggle.setAttribute("aria-pressed", String(showing));
-  videoSubtitlesToggle.setAttribute("aria-label", showing ? "Turn subtitles off" : "Turn subtitles on");
-  videoSubtitlesToggle.title = showing ? "Turn subtitles off" : "Turn subtitles on";
+  const available = activeSubtitleCues.length > 0;
+  videoSubtitlesToggle.hidden = !available;
+  videoSubtitlesToggle.setAttribute("aria-pressed", String(activeSubtitlesEnabled));
+  videoSubtitlesToggle.setAttribute("aria-label", activeSubtitlesEnabled ? "Turn subtitles off" : "Turn subtitles on");
+  videoSubtitlesToggle.title = activeSubtitlesEnabled ? "Turn subtitles off" : "Turn subtitles on";
+}
+
+function parseSubtitleTimestamp(value) {
+  const parts = value.replace(",", ".").split(":");
+  if (parts.length === 2) {
+    const minutes = Number(parts[0]);
+    const seconds = Number(parts[1]);
+    return Number.isFinite(minutes + seconds) ? minutes * 60 + seconds : NaN;
+  }
+  if (parts.length === 3) {
+    const hours = Number(parts[0]);
+    const minutes = Number(parts[1]);
+    const seconds = Number(parts[2]);
+    return Number.isFinite(hours + minutes + seconds) ? hours * 3600 + minutes * 60 + seconds : NaN;
+  }
+  return NaN;
+}
+
+function parseWebVtt(subtitles) {
+  const cues = [];
+  const decode = document.createElement("textarea");
+  for (const block of subtitles.replace(/^\uFEFF/, "").split(/\r?\n(?:[ \t]*\r?\n)+/)) {
+    const lines = block.split(/\r?\n/);
+    const timingIndex = lines.findIndex((line) => line.includes("-->"));
+    if (timingIndex < 0) continue;
+    const [startToken, endPart] = lines[timingIndex].split("-->");
+    const endToken = endPart?.trim().split(/[ \t]/, 1)[0];
+    const start = parseSubtitleTimestamp(startToken.trim());
+    const end = parseSubtitleTimestamp(endToken || "");
+    const plainText = lines.slice(timingIndex + 1).join("\n").replace(/<[^>]*>/g, "");
+    decode.innerHTML = plainText;
+    const text = decode.value.trim();
+    if (Number.isFinite(start) && Number.isFinite(end) && end > start && text) cues.push({ start, end, text });
+  }
+  return cues;
+}
+
+function updateVideoSubtitleOverlay() {
+  const currentTime = videoPlayer.currentTime;
+  const currentText = activeSubtitleCues
+    .filter((cue) => currentTime >= cue.start && currentTime < cue.end)
+    .map((cue) => cue.text)
+    .join("\n");
+  const visible = activeSubtitlesEnabled && Boolean(currentText) && !videoFullscreenNative;
+  videoSubtitleOverlay.textContent = visible ? currentText : "";
+  videoSubtitleOverlay.hidden = !visible;
+  if (activeSubtitleTrack) {
+    activeSubtitleTrack.mode = videoFullscreenNative && activeSubtitlesEnabled ? "showing" : "hidden";
+  }
 }
 
 function clearVideoSubtitles() {
@@ -792,29 +844,40 @@ function clearVideoSubtitles() {
   activeSubtitleElement = null;
   activeSubtitleTrack = null;
   activeSubtitleUrl = null;
+  activeSubtitleCues = [];
+  activeSubtitlesEnabled = false;
+  videoSubtitleOverlay.textContent = "";
+  videoSubtitleOverlay.hidden = true;
   updateVideoSubtitleButton();
 }
 
 function attachVideoSubtitles(record) {
   clearVideoSubtitles();
   if (record.kind !== "video" || !record.subtitles) return;
+  activeSubtitleCues = parseWebVtt(record.subtitles);
+  if (!activeSubtitleCues.length) return;
   activeSubtitleUrl = URL.createObjectURL(new Blob([record.subtitles], { type: "text/vtt;charset=utf-8" }));
   const trackElement = document.createElement("track");
   trackElement.kind = "subtitles";
   trackElement.label = "English";
   trackElement.srclang = record.subtitleLanguage || "en";
-  trackElement.default = true;
+  trackElement.default = false;
   trackElement.src = activeSubtitleUrl;
   trackElement.addEventListener("load", () => {
     if (activeSubtitleElement !== trackElement || !activeSubtitleTrack) return;
-    activeSubtitleTrack.mode = "showing";
-    updateVideoSubtitleButton();
+    updateVideoSubtitleOverlay();
+  });
+  trackElement.addEventListener("error", () => {
+    if (activeSubtitleElement !== trackElement) return;
+    activeSubtitleTrack = null;
+    updateVideoSubtitleOverlay();
   });
   activeSubtitleElement = trackElement;
   videoPlayer.append(trackElement);
   activeSubtitleTrack = trackElement.track;
-  activeSubtitleTrack.mode = "showing";
+  activeSubtitleTrack.mode = "hidden";
   updateVideoSubtitleButton();
+  updateVideoSubtitleOverlay();
 }
 
 function getStandardFullscreenElement() {
@@ -943,7 +1006,7 @@ async function closeVideoTheater({ fromHistory = false } = {}) {
 
 function openVideoTheater() {
   if (activePlayer !== videoPlayer || videoTheater.open || videoTheaterClosePromise) return;
-  videoTheaterTitle.textContent = activeMediaRecord?.title || activeMediaRecord?.name?.replace(/\.[^.]+$/, "") || "Now playing";
+  videoTheaterTitle.textContent = activeMediaRecord ? getMediaDisplayTitle(activeMediaRecord) : "Now playing";
   videoTheaterSubtitle.textContent = [activeMediaRecord?.artist, activeMediaRecord?.album].filter(Boolean).join(" · ") || "Puffin video library";
   videoPlayer.controls = false;
   videoPlayer.hidden = false;
@@ -1016,7 +1079,7 @@ async function startPlayback(record, startTime = 0, openVideo = false, autoplay 
     void prepareQueue(record);
     renderPlayerQueue();
     if (playerFullscreen && !playerFullscreen.hidden && record.kind === "audio") {
-      fullPlayerTitle.textContent = record.title || record.name.replace(/\.[^.]+$/, "");
+      fullPlayerTitle.textContent = getMediaDisplayTitle(record);
       fullPlayerArtist.textContent = record.artist || "Puffin Library";
       fullPlayerArtwork.src = record.artwork || "/favicon.svg";
       renderPlayerLyrics(record);
@@ -1025,7 +1088,7 @@ async function startPlayback(record, startTime = 0, openVideo = false, autoplay 
     playerCollapseRequested = false;
     playerPinnedOpen = true;
     setPlayerRevealState(false);
-    currentMediaTitle.textContent = record.title || record.name.replace(/\.[^.]+$/, "");
+    currentMediaTitle.textContent = getMediaDisplayTitle(record);
     playerSubtitle.textContent = record.artist || "Puffin Library";
     const isVideo = record.kind === "video";
     [playerShuffle, playerRepeat, playerVisualizer, playerQueue].forEach((button) => { button.disabled = isVideo; });
@@ -1043,8 +1106,8 @@ async function startPlayback(record, startTime = 0, openVideo = false, autoplay 
     const otherPlayer = player === videoPlayer ? audioPlayer : videoPlayer;
     otherPlayer.hidden = true;
     player.hidden = false;
-    player.src = activeObjectUrl;
     if (player === videoPlayer) attachVideoSubtitles(record);
+    player.src = activeObjectUrl;
     player.playbackRate = 1;
     player.defaultPlaybackRate = 1;
     playerSpeed.value = "1";
@@ -1143,10 +1206,10 @@ window.addEventListener("puffin:metadata-updated", (event) => {
   const queuedRecord = queueRecords.find((item) => item.id === record.id);
   if (queuedRecord) Object.assign(queuedRecord, record);
   if (record.id !== activeMediaId) return;
-  currentMediaTitle.textContent = record.title || record.name.replace(/\.[^.]+$/, "");
+  currentMediaTitle.textContent = getMediaDisplayTitle(record);
   playerSubtitle.textContent = record.kind === "video" ? `Video · ${record.artist || "Puffin Library"}` : (record.artist || "Puffin Library");
   if (playerFullscreen && !playerFullscreen.hidden && record.kind === "audio") {
-    fullPlayerTitle.textContent = record.title || record.name.replace(/\.[^.]+$/, "");
+    fullPlayerTitle.textContent = getMediaDisplayTitle(record);
     fullPlayerArtist.textContent = record.artist || "Puffin Library";
     fullPlayerArtwork.src = record.artwork || "/favicon.svg";
     renderPlayerLyrics(record);
@@ -1158,14 +1221,18 @@ window.addEventListener("puffin:metadata-updated", (event) => {
   playerVideoFallback.hidden = record.kind !== "video" || Boolean(record.artwork);
   playerExpandVideo.hidden = record.kind !== "video";
   if (videoTheater.open) {
-    videoTheaterTitle.textContent = record.title || record.name.replace(/\.[^.]+$/, "");
+    videoTheaterTitle.textContent = getMediaDisplayTitle(record);
     videoTheaterSubtitle.textContent = [record.artist, record.album].filter(Boolean).join(" · ") || "Puffin video library";
   }
 });
 
 for (const player of [audioPlayer, videoPlayer]) {
   for (const eventName of ["loadedmetadata", "durationchange", "timeupdate", "play", "pause", "ended"]) {
-    player.addEventListener(eventName, () => { updatePlayerControls(); if (player === activePlayer) updateMediaSession(); });
+    player.addEventListener(eventName, () => {
+      updatePlayerControls();
+      if (player === activePlayer) updateMediaSession();
+      if (player === videoPlayer) updateVideoSubtitleOverlay();
+    });
   }
   player.addEventListener("play", () => {
     if (player === activePlayer) setPlayerStatus("");
@@ -1379,8 +1446,9 @@ videoPlayerToggle.addEventListener("click", async () => {
   updatePlayerControls();
 });
 videoSubtitlesToggle.addEventListener("click", () => {
-  if (!activeSubtitleTrack) return;
-  activeSubtitleTrack.mode = activeSubtitleTrack.mode === "showing" ? "hidden" : "showing";
+  if (!activeSubtitleCues.length) return;
+  activeSubtitlesEnabled = !activeSubtitlesEnabled;
+  updateVideoSubtitleOverlay();
   updateVideoSubtitleButton();
   revealVideoControls();
   scheduleVideoControlsHide();
@@ -1496,11 +1564,13 @@ for (const eventName of ["fullscreenchange", "webkitfullscreenchange"]) {
 videoPlayer.addEventListener("webkitbeginfullscreen", () => {
   videoFullscreenNative = true;
   videoPlayer.controls = true;
+  updateVideoSubtitleOverlay();
   syncFullscreenState();
 });
 videoPlayer.addEventListener("webkitendfullscreen", () => {
   videoFullscreenNative = false;
   videoPlayer.controls = false;
+  updateVideoSubtitleOverlay();
   syncFullscreenState();
   sampleVideoProgress(true);
   if (videoTheater.open) scheduleVideoControlsHide();

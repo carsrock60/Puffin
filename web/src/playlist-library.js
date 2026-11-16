@@ -4,6 +4,7 @@ import {
   deleteMediaFile,
   deletePlaylist,
   getMediaBlob,
+  getMediaDisplayTitle,
   getMediaStorageLimit,
   listMediaFiles,
   listPlaylists,
@@ -325,7 +326,7 @@ export function initializePlaylistLibrary({ onPlay, onDeleted }) {
     info.className = "media-info";
     const name = document.createElement("span");
     name.className = "media-name";
-    name.textContent = record.title || record.name.replace(/\.[^.]+$/, "");
+    name.textContent = getMediaDisplayTitle(record);
     const details = document.createElement("span");
     details.className = "media-details";
     const typeLabel = record.kind === "video" ? "Video" : "Audio";
@@ -358,7 +359,7 @@ export function initializePlaylistLibrary({ onPlay, onDeleted }) {
     const overflow = document.createElement("details");
     overflow.className = "media-overflow";
     const summary = document.createElement("summary");
-    summary.setAttribute("aria-label", `More options for ${record.title || record.name}`);
+    summary.setAttribute("aria-label", `More options for ${getMediaDisplayTitle(record)}`);
     summary.title = "More options";
     summary.textContent = "•••";
     const menu = document.createElement("div");
@@ -370,7 +371,7 @@ export function initializePlaylistLibrary({ onPlay, onDeleted }) {
       const popup = document.querySelector("#media-details-dialog");
       const limit = getMediaStorageLimit();
       const percent = limit > 0 ? (record.size / limit * 100).toFixed(2) : "0.00";
-      document.querySelector("#media-details-title").textContent = record.title || record.name;
+      document.querySelector("#media-details-title").textContent = getMediaDisplayTitle(record);
       document.querySelector("#media-details-content").textContent = `Added ${new Date(record.importedAt).toLocaleDateString()} · ${formatBytes(record.size)} · ${percent}% of storage limit`;
       overflow.open = false;
       popup.showModal();

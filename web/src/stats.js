@@ -1,4 +1,4 @@
-import { getMediaStorageCapacity, getPuffinStats, listMediaFiles } from "./library.js";
+import { getMediaDisplayTitle, getMediaStorageCapacity, getPuffinStats, listMediaFiles } from "./library.js";
 
 const $ = (selector) => document.querySelector(selector);
 const number = new Intl.NumberFormat();
@@ -145,7 +145,7 @@ async function renderStats() {
     const mediaById = new Map(records.map((record) => [record.id, record]));
     const mostPlayed = [...playCounts].sort((a, b) => b[1] - a[1]);
     renderList("#stats-top-tracks", mostPlayed.slice(0, 5).map(([id, count]) => {
-      const record = mediaById.get(id); return record && { primary: record.title || record.name.replace(/\.[^.]+$/, ""), secondary: `${record.artist || "Unknown artist"} · ${number.format(count)} plays` };
+      const record = mediaById.get(id); return record && { primary: getMediaDisplayTitle(record), secondary: `${record.artist || "Unknown artist"} · ${number.format(count)} plays` };
     }).filter(Boolean), "No played tracks in this period.");
     const artistCounts = new Map();
     mostPlayed.forEach(([id, count]) => { const artist = mediaById.get(id)?.artist?.trim(); if (artist) artistCounts.set(artist, (artistCounts.get(artist) || 0) + count); });
@@ -157,7 +157,7 @@ async function renderStats() {
   const genreCounts = new Map();
   records.forEach((record) => String(record.genre || "").split(/[;,/]/).map((genre) => genre.trim()).filter(Boolean).forEach((genre) => genreCounts.set(genre, (genreCounts.get(genre) || 0) + 1)));
   renderList("#stats-genres", [...genreCounts].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([genre, count]) => ({ primary: genre, secondary: `${number.format(count)} ${count === 1 ? "track" : "tracks"}` })), "Add genre tags to see your library mix.");
-  renderList("#stats-recent-added", records.slice(0, 5).map((record) => ({ primary: record.title || record.name.replace(/\.[^.]+$/, ""), secondary: record.artist || new Date(record.importedAt).toLocaleDateString() })), "Your newest additions will show here.");
+  renderList("#stats-recent-added", records.slice(0, 5).map((record) => ({ primary: getMediaDisplayTitle(record), secondary: record.artist || new Date(record.importedAt).toLocaleDateString() })), "Your newest additions will show here.");
   $("#stats-downloads").textContent = number.format(sum(selectedDays, "downloads"));
   $("#stats-tag-edits").textContent = number.format(sum(selectedDays, "tagEdits"));
   $("#stats-batch-jobs").textContent = number.format(sum(selectedDays, "batchJobs"));

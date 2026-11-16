@@ -1,6 +1,6 @@
-import { getMediaBlob, getVideoWatchHistory, listMediaFiles, listPlaylists } from "./library.js";
+import { getMediaBlob, getMediaDisplayTitle, getVideoWatchHistory, listMediaFiles, listPlaylists } from "./library.js";
 
-const titleOf = (record) => record.title || record.name.replace(/\.[^.]+$/, "");
+const titleOf = getMediaDisplayTitle;
 const normalize = (value) => String(value || "").toLocaleLowerCase().trim();
 
 function formatTime(seconds) {
