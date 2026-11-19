@@ -1,1 +1,3 @@
+# yt-dlp[default] includes yt-dlp-ejs, which YouTube's player challenge needs.
+# Update with: .venv/bin/python -m pip install -U -r requirements.txt
 yt-dlp[default]

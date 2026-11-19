@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import json
 import logging
 import mimetypes
@@ -25,6 +26,7 @@ DOWNLOAD_DIR = Path(os.environ.get("PUFFIN_DOWNLOAD_DIR", "~/puffin-downloads"))
 MAX_DOWNLOAD_BYTES = int(os.environ.get("PUFFIN_MAX_DOWNLOAD_BYTES", str(2 * 1024**3)))
 MIN_FREE_BYTES = int(os.environ.get("PUFFIN_MIN_FREE_BYTES", str(1024**3)))
 JOB_RETENTION_SECONDS = int(os.environ.get("PUFFIN_JOB_RETENTION_SECONDS", "3600"))
+VIDEO_QUALITY_OPTIONS = (240, 360, 480, 720, 1080, 1440, 2160)
 ALLOWED_ORIGINS = {
     origin.strip().rstrip("/")
     for origin in os.environ.get("PUFFIN_ALLOWED_ORIGINS", "http://localhost:5173").split(",")
@@ -66,7 +68,105 @@ def _system_tool(name: str) -> str:
 def _yt_dlp_command(*arguments: str) -> list[str]:
     # Use the exact interpreter running this service. systemd does not
     # activate the virtual environment's bin directory in PATH.
-    return [sys.executable, "-m", "yt_dlp", *arguments]
+    return [sys.executable, "-m", "yt_dlp", *_js_runtime_arguments(), *arguments]
+
+
+JS_RUNTIME_NAMES = ("deno", "node", "quickjs", "bun")
+JS_RUNTIME_BINARIES = {
+    "deno": ("deno",),
+    "node": ("node",),
+    "quickjs": ("qjs", "quickjs"),
+    "bun": ("bun",),
+}
+JS_RUNTIME_DIRECTORIES = (
+    Path.home() / ".deno" / "bin",
+    Path.home() / ".bun" / "bin",
+    Path.home() / ".local" / "bin",
+    Path("/usr/local/bin"),
+    Path("/usr/bin"),
+    Path("/opt/homebrew/bin"),
+)
+
+
+def _is_executable(path: Path) -> bool:
+    return path.is_file() and os.access(path, os.X_OK)
+
+
+def _find_runtime(name: str) -> Path | None:
+    for binary_name in JS_RUNTIME_BINARIES[name]:
+        found = shutil.which(binary_name)
+        if found:
+            return Path(found)
+        for directory in JS_RUNTIME_DIRECTORIES:
+            candidate = directory / binary_name
+            if _is_executable(candidate):
+                return candidate
+    return None
+
+
+def _find_js_runtimes() -> list[tuple[str, Path]]:
+    """Locate the JavaScript runtimes yt-dlp can use for YouTube challenges.
+
+    Deno and Bun publish no 32-bit ARM builds, so 32-bit Raspberry Pi
+    installations typically use Node.js or QuickJS instead. yt-dlp accepts
+    deno, node, quickjs, and bun in that order of preference.
+    """
+    override = os.environ.get("PUFFIN_JS_RUNTIMES", "").strip()
+    if not override:
+        deno_override = os.environ.get("PUFFIN_DENO_PATH", "").strip()
+        if deno_override:
+            override = f"deno:{deno_override}"
+    if override:
+        runtimes = []
+        for entry in override.split(","):
+            name, _, path = entry.strip().partition(":")
+            name = name.strip().lower()
+            if name not in JS_RUNTIME_NAMES:
+                LOGGER.warning("Ignoring unknown JavaScript runtime %r in PUFFIN_JS_RUNTIMES", name)
+                continue
+            binary = Path(path).expanduser() if path.strip() else _find_runtime(name)
+            if binary is not None and _is_executable(binary):
+                runtimes.append((name, binary))
+            else:
+                LOGGER.warning("Configured JavaScript runtime %s was not found or is not executable", name)
+        return runtimes
+    runtimes = []
+    for name in JS_RUNTIME_NAMES:
+        binary = _find_runtime(name)
+        if binary is not None:
+            runtimes.append((name, binary))
+    return runtimes
+
+
+def _yt_dlp_environment() -> dict[str, str]:
+    env = dict(os.environ)
+    directories = [str(binary.parent) for _, binary in _find_js_runtimes()]
+    env["PATH"] = os.pathsep.join(filter(None, [*directories, env.get("PATH", "")]))
+    return env
+
+
+@functools.lru_cache(maxsize=1)
+def _yt_dlp_supports_js_runtimes() -> bool:
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "yt_dlp", "--help"],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return "--js-runtimes" in (result.stdout or "")
+
+
+def _js_runtime_arguments() -> list[str]:
+    runtimes = _find_js_runtimes()
+    if not runtimes or not _yt_dlp_supports_js_runtimes():
+        return []
+    arguments = []
+    for name, binary in runtimes:
+        arguments.extend(["--js-runtimes", f"{name}:{binary}"])
+    return arguments
 
 
 def _signal_process_group(process: subprocess.Popen, force: bool = False) -> None:
@@ -102,8 +202,22 @@ def _yt_dlp_failure_message(lines: list[str], return_code: int) -> str:
         return "yt-dlp is missing from the service virtual environment. Run pip install -r requirements.txt and restart the Pi service."
     if "requested format is not available" in lowered:
         return "This video does not offer H.264 video with AAC audio. Puffin will not re-encode it on the Pi; choose another video."
-    if any(term in lowered for term in ("javascript runtime", "javascript challenge", "yt-dlp-ejs", "[jsc]")):
-        return "YouTube could not run its JavaScript challenge solver. Install Deno and update the Pi service requirements, then restart the service."
+    if any(term in lowered for term in ("javascript runtime", "javascript challenge", "yt-dlp-ejs", "[jsc]", "failed to decrypt", "nsig")):
+        runtimes = _find_js_runtimes()
+        if not runtimes:
+            return (
+                "YouTube needs an external JavaScript runtime to solve its challenge, but the Pi service "
+                "could not find Deno, Node.js, QuickJS, or Bun. Deno has no 32-bit build: on 32-bit Raspberry "
+                "Pi OS install Node.js 20+ or QuickJS, then set PUFFIN_JS_RUNTIMES=node:/path/to/node (or "
+                "quickjs:/path/to/qjs) in /etc/puffin-downloader.env and restart the service. "
+                "See pi-service/README.md."
+            )
+        found = ", ".join(f"{name} at {binary}" for name, binary in runtimes)
+        return (
+            f"YouTube's JavaScript challenge solver failed even though the Pi service found {found}. "
+            "Update the Pi service requirements (pip install -U -r requirements.txt) so yt-dlp and "
+            "yt-dlp-ejs are current, then restart the service."
+        )
     if "http error 429" in lowered or "too many requests" in lowered:
         return "YouTube temporarily rate-limited the Pi. Wait a little and retry."
     if "sign in to confirm" in lowered or "private video" in lowered or "requires authentication" in lowered:
@@ -211,7 +325,7 @@ def _media_streams(path: Path) -> list[dict]:
     probe = subprocess.run(
         [
             _system_tool("ffprobe"), "-v", "error",
-            "-show_entries", "stream=codec_type,codec_name", "-of", "json", str(path),
+            "-show_entries", "stream=codec_type,codec_name,width,height", "-of", "json", str(path),
         ],
         capture_output=True,
         text=True,
@@ -295,8 +409,18 @@ def _video_format_options(height: int = 720) -> list[str]:
     ]
 
 
+def _verify_video_resolution(actual_height: object, requested_height: int) -> int:
+    if type(actual_height) is not int:
+        raise DownloadFailure("The Pi could not verify the downloaded video's resolution.")
+    if actual_height > requested_height:
+        raise DownloadFailure(
+            f"The Pi selected {actual_height}p, above the requested maximum of {requested_height}p."
+        )
+    return actual_height
+
+
 def _public_job(job: dict) -> dict:
-    return {
+    public_job = {
         "id": job["id"],
         "status": job["status"],
         "progress": job["progress"],
@@ -311,6 +435,10 @@ def _public_job(job: dict) -> dict:
         "subtitle_language": job.get("subtitle_language"),
         "error": job.get("error"),
     }
+    if job.get("kind") == "video":
+        public_job["requested_video_height"] = job.get("video_height", 720)
+        public_job["actual_video_height"] = job.get("actual_video_height")
+    return public_job
 
 
 def _search_youtube(query: str) -> list[dict]:
@@ -322,7 +450,7 @@ def _search_youtube(query: str) -> list[dict]:
         "--no-warnings",
         f"ytsearch10:{query}",
     )
-    result = subprocess.run(command, capture_output=True, text=True, timeout=30, check=True)
+    result = subprocess.run(command, capture_output=True, text=True, timeout=30, check=True, env=_yt_dlp_environment())
     payload = json.loads(result.stdout)
     videos = []
     for entry in payload.get("entries") or []:
@@ -416,6 +544,7 @@ def _run_download(job_id: str) -> None:
             errors="replace",
             bufsize=1,
             start_new_session=True,
+            env=_yt_dlp_environment(),
         )
         with JOBS_LOCK:
             current_job = JOBS.get(job_id)
@@ -546,6 +675,23 @@ def _run_download(job_id: str) -> None:
         if output_size > MAX_DOWNLOAD_BYTES:
             raise DownloadFailure("The download exceeded the configured file size limit.")
 
+        actual_video_height = None
+        if job["kind"] == "video":
+            streams = _media_streams(output_file)
+            video_stream = next((stream for stream in streams if stream.get("codec_type") == "video"), None)
+            requested_video_height = job.get("video_height", 720)
+            actual_video_height = _verify_video_resolution(
+                video_stream.get("height") if video_stream else None,
+                requested_video_height,
+            )
+            LOGGER.info(
+                "Video download job %s resolved to %sp (requested maximum %sp, %s bytes)",
+                job_id,
+                actual_video_height,
+                requested_video_height,
+                output_size,
+            )
+
         with JOBS_LOCK:
             current_job = JOBS.get(job_id)
             if not current_job:
@@ -565,6 +711,7 @@ def _run_download(job_id: str) -> None:
                 "file_path": str(output_file),
                 "size": output_size,
                 "mime_type": AUDIO_MIME_TYPES.get(output_file.suffix.lower().lstrip(".")) if job["kind"] == "audio" else (mimetypes.guess_type(output_file.name)[0] or "application/octet-stream"),
+                "actual_video_height": actual_video_height,
                 "subtitle_path": str(subtitle_file) if subtitle_file else None,
                 "subtitle_size": subtitle_file.stat().st_size if subtitle_file else 0,
                 "subtitle_language": subtitle_language,
@@ -694,7 +841,15 @@ class PuffinHandler(BaseHTTPRequestHandler):
         path_parts = [unquote(part) for part in parsed_path.path.strip("/").split("/")]
 
         if path_parts == ["api", "health"]:
-            self._json(200, {"ok": True, "service": "puffin-downloader"})
+            runtimes = [
+                {"name": name, "path": str(binary)} for name, binary in _find_js_runtimes()
+            ]
+            self._json(200, {
+                "ok": True,
+                "service": "puffin-downloader",
+                "video_quality_options": list(VIDEO_QUALITY_OPTIONS),
+                "js_runtimes": runtimes,
+            })
             return
 
         if path_parts == ["api", "search"]:
@@ -843,7 +998,7 @@ class PuffinHandler(BaseHTTPRequestHandler):
         requested_audio_formats = request.get("supported_audio_formats", [])
         preferred_subtitle_language = _normalize_subtitle_language(request.get("preferred_subtitle_language", "en"))
         video_height = request.get("video_height", 720)
-        if type(video_height) is not int or video_height not in {240, 360, 480, 720, 1080, 1440, 2160}:
+        if type(video_height) is not int or video_height not in VIDEO_QUALITY_OPTIONS:
             self._json(400, {"error": "Choose a valid video quality."})
             return
         if not isinstance(requested_audio_formats, list):

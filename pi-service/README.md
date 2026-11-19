@@ -4,9 +4,9 @@ The Pi service runs `yt-dlp` as a private, job-based API. Puffin requests an aud
 
 The video quality slider sets a maximum resolution. The Pi prefers an already combined H.264/AAC MP4 at that resolution, then falls back to compatible separate streams at or below it, which it merges without re-encoding. The actual resolution depends on what the source offers. Video jobs save available manual, automatic, and translated captions as WebVTT, preferring the browser's language and then English; Puffin keeps the selected track with the local video and can show or hide it during playback.
 
-The service accepts HTTPS YouTube URLs and `ytsearch:` search queries. Audio downloads preserve yt-dlp's audio-only source format when the requesting browser supports it; Puffin sends its supported audio formats with the request. If necessary, the Pi remuxes AAC into M4A without re-encoding, or converts incompatible audio to AAC/M4A at 192 kb/s. Puffin can search YouTube through the Pi's `GET /api/search?q=...` endpoint; this uses yt-dlp's flat search to return up to 10 video titles, channels, durations, URLs, and thumbnails without downloading media. CSV batches can submit a `ytsearch:` query for each `Track Name`, `Artist Name`, and `Album` row. Video downloads require the source to offer H.264 and AAC streams; the service reports an error when those formats are unavailable rather than returning a less-compatible codec. It permits one active download or file transfer at a time. A new request replaces an older completed file that Puffin did not confirm. The default temporary file limit is 2 GiB, and the default free-space reserve is 1 GiB. An unconfirmed file is removed after one hour. Job state is held in memory, so a Pi restart cancels active jobs and clears abandoned Puffin job folders.
+The service accepts HTTPS YouTube URLs and `ytsearch:` search queries. Audio downloads preserve yt-dlp's audio-only source format when the requesting browser supports it; Puffin sends its supported audio formats with the request. If necessary, the Pi remuxes AAC into M4A without re-encoding, or converts incompatible audio to AAC/M4A at 192 kb/s. Puffin can search YouTube through the Pi's `GET /api/search?q=...` endpoint; this uses yt-dlp's flat search to return up to 10 video titles, channels, durations, URLs, and thumbnails without downloading media. Video downloads require the source to offer H.264 and AAC streams; the service reports an error when those formats are unavailable rather than returning a less-compatible codec. It permits one active download or file transfer at a time. A new request replaces an older completed file that Puffin did not confirm. The default temporary file limit is 2 GiB, and the default free-space reserve is 1 GiB. An unconfirmed file is removed after one hour. Job state is held in memory, so a Pi restart cancels active jobs and clears abandoned Puffin job folders.
 
-YouTube now requires yt-dlp's JavaScript challenge solver and an external JavaScript runtime for full extraction support. The setup below installs the matching `yt-dlp-ejs` dependency and Deno. Puffin invokes yt-dlp through the service's own virtual-environment Python interpreter, so it does not depend on shell activation or systemd finding yt-dlp through `PATH`. [yt-dlp EJS setup](https://github.com/yt-dlp/yt-dlp/wiki/EJS)
+YouTube now requires yt-dlp's JavaScript challenge solver and an external JavaScript runtime for full extraction support. The setup below installs the matching `yt-dlp-ejs` dependency and a runtime. yt-dlp supports Deno, Node.js, QuickJS, and Bun, in that order. Deno and Bun publish no 32-bit ARM builds, so a 32-bit Raspberry Pi needs Node.js or QuickJS. Puffin invokes yt-dlp through the service's own virtual-environment Python interpreter, so it does not depend on shell activation or systemd finding yt-dlp through `PATH`. [yt-dlp EJS setup](https://github.com/yt-dlp/yt-dlp/wiki/EJS)
 
 ## Install on Raspberry Pi OS
 
@@ -16,28 +16,43 @@ Clone the repository onto the Pi, then install the system dependencies and Pytho
 git clone https://github.com/carsrock60/Puffin.git ~/Puffin
 sudo apt update
 sudo apt install -y python3-venv ffmpeg curl
+```
+
+Install one JavaScript runtime. On 64-bit Raspberry Pi OS, Deno is the simplest option:
+
+```sh
 curl -fsSL https://deno.land/install.sh | sh
 export PATH="$HOME/.deno/bin:$PATH"
+deno --version
+```
+
+On 32-bit Raspberry Pi OS, use Node.js 20 or newer instead. yt-dlp requires a recent runtime, so check the version and install a newer `linux-armv7l` build from [nodejs.org](https://nodejs.org/en/download) if the system package is older than 20:
+
+```sh
+sudo apt install -y nodejs
+node --version
+```
+
+Then create the Python environment:
+
+```sh
 cd ~/Puffin/pi-service
 python3 -m venv .venv
 .venv/bin/python -m pip install --upgrade pip
 .venv/bin/python -m pip install --upgrade -r requirements.txt
-deno --version
 .venv/bin/python -m yt_dlp --version
 ```
 
 ### Update an existing Pi installation
 
-Pull the service changes and update the virtual-environment packages. If Deno is not installed for the Pi service user, install it. For a systemd installation, also add the `Environment=PATH=...` line shown below to `/etc/systemd/system/puffin-downloader.service` under `[Service]`, replacing `YOUR_PI_USER` with the Pi account name:
+Pull the service changes and update the virtual-environment packages. The service finds an installed JavaScript runtime on `PATH` or in common install locations; if it cannot, set `PUFFIN_JS_RUNTIMES` as described below. For a systemd installation, also add the `Environment=PATH=...` line shown below to `/etc/systemd/system/puffin-downloader.service` under `[Service]`, replacing `YOUR_PI_USER` with the Pi account name:
 
 ```sh
 cd ~/Puffin
 git pull --ff-only
 cd pi-service
-curl -fsSL https://deno.land/install.sh | sh
 .venv/bin/python -m pip install --upgrade -r requirements.txt
 .venv/bin/python -m yt_dlp --version
-deno --version
 sudo nano /etc/systemd/system/puffin-downloader.service
 sudo systemctl daemon-reload
 sudo systemctl restart puffin-downloader
@@ -50,7 +65,30 @@ The service unit needs this line, with the actual Pi username in place of `YOUR_
 Environment=PATH=/home/YOUR_PI_USER/.deno/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
 ```
 
-If Deno is already installed, the install command can be skipped. The service must be restarted after updating so it uses the new code and dependencies.
+The line above includes Node.js and QuickJS locations (`/usr/bin`, `/usr/local/bin`) and Deno's installer directory. The service must be restarted after updating so it uses the new code and dependencies.
+
+### If YouTube reports a JavaScript challenge failure
+
+Puffin finds runtimes through `PUFFIN_JS_RUNTIMES`, then `PATH`, then common install locations, and passes each one to yt-dlp explicitly with `--js-runtimes`, so a minimal systemd `PATH` is no longer enough to break downloads. Check what the service detected with:
+
+```sh
+curl -s http://127.0.0.1:8765/api/health
+```
+
+A working service reports a non-empty `js_runtimes` array. If it is empty, install Node.js (32-bit) or Deno (64-bit), or point the service at the binary in `/etc/puffin-downloader.env`:
+
+```ini
+# Example: 32-bit Pi using Node.js
+PUFFIN_JS_RUNTIMES=node:/usr/bin/node
+```
+
+`PUFFIN_JS_RUNTIMES` accepts a comma-separated list of `runtime:path` entries using `deno`, `node`, `quickjs`, or `bun`. The older `PUFFIN_DENO_PATH` variable is still honored when `PUFFIN_JS_RUNTIMES` is not set. If a runtime is detected but downloads still fail, update the packages so yt-dlp and `yt-dlp-ejs` match:
+
+```sh
+cd ~/Puffin/pi-service
+.venv/bin/python -m pip install --upgrade -r requirements.txt
+sudo systemctl restart puffin-downloader
+```
 
 Set the allowed browser origins. Include the Vercel site origin and the local Vite origin used during development. Origins have no trailing slash. For example, if your deployed app is `https://puffin.vercel.app`, include that exact origin:
 
@@ -90,7 +128,7 @@ PUFFIN_MAX_DOWNLOAD_BYTES=2147483648
 PUFFIN_MIN_FREE_BYTES=1073741824
 ```
 
-Replace the placeholder values. The systemd example includes Deno's install directory in `PATH`; update that line if Deno is installed elsewhere. Then enable the service:
+Replace the placeholder values. The systemd example includes Deno's install directory in `PATH`; Node.js and QuickJS are already available through `/usr/bin` or `/usr/local/bin`. Update that line if the runtime is installed elsewhere. Then enable the service:
 
 ```sh
 sudo chmod 600 /etc/puffin-downloader.env

@@ -1,5 +1,6 @@
 import { assertMediaStorageCapacity, getMediaStorageCapacity, recordPuffinActivity, saveMediaFile } from "./library.js";
 import { formatBytes, guardReadyPiDownload, MediaCapacityError } from "./media-capacity.js";
+import { piSupportsVideoQuality, videoHeightForSliderValue, videoQualityLabel } from "./video-quality.js";
 
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
@@ -39,9 +40,16 @@ function setStatus(element, message) {
   element.textContent = message;
 }
 
-async function checkPi(baseUrl) {
+async function checkPi(baseUrl, requestedVideoHeight = null) {
   const health = await requestJson(baseUrl, "/api/health");
   if (!health.ok) throw new Error("The Pi service did not return a healthy status.");
+  if (requestedVideoHeight !== null && !piSupportsVideoQuality(health, requestedVideoHeight)) {
+    throw new Error("The Pi downloader is outdated and cannot apply the video quality slider. Update and restart the Pi downloader service, then retry.");
+  }
+}
+
+function videoHeightLabel(height) {
+  return height === 2160 ? "4K" : `${height}p`;
 }
 
 async function confirmPiSavedFile(baseUrl, jobId) {
@@ -73,54 +81,6 @@ function formatTime(seconds) {
   const rounded = Math.ceil(seconds);
   const minutes = Math.floor(rounded / 60);
   return minutes ? `${minutes}:${String(rounded % 60).padStart(2, "0")}` : `${rounded}s`;
-}
-
-function parseCsv(text) {
-  const rows = [];
-  let row = [];
-  let cell = "";
-  let quoted = false;
-  const input = text.replace(/^\uFEFF/, "");
-  for (let index = 0; index < input.length; index += 1) {
-    const character = input[index];
-    if (quoted) {
-      if (character === '"' && input[index + 1] === '"') {
-        cell += '"';
-        index += 1;
-      } else if (character === '"') quoted = false;
-      else cell += character;
-    } else if (character === '"' && cell.length === 0) quoted = true;
-    else if (character === ",") {
-      row.push(cell);
-      cell = "";
-    } else if (character === "\n" || character === "\r") {
-      if (character === "\r" && input[index + 1] === "\n") index += 1;
-      row.push(cell);
-      rows.push(row);
-      row = [];
-      cell = "";
-    } else cell += character;
-  }
-  if (quoted) throw new Error("The CSV has an unclosed quoted field.");
-  if (cell.length || row.length) {
-    row.push(cell);
-    rows.push(row);
-  }
-  return rows;
-}
-
-function selectCsvRows(rows, selector) {
-  if (!selector.trim()) return rows;
-  const selected = new Set();
-  for (const part of selector.split(",").map((value) => value.trim()).filter(Boolean)) {
-    const range = part.match(/^(\d+)(?:\s*-\s*(\d+))?$/);
-    if (!range) throw new Error("Enter row numbers like 1,3-5, or leave blank to download all rows.");
-    const start = Number(range[1]);
-    const end = Number(range[2] || range[1]);
-    if (start < 1 || end < start || end > rows.length) throw new Error(`Row range ${part} is outside 1–${rows.length}.`);
-    for (let value = start; value <= end; value += 1) selected.add(value);
-  }
-  return [...selected].sort((a, b) => a - b).map((number) => rows[number - 1]);
 }
 
 function getSupportedAudioFormats() {
@@ -277,10 +237,9 @@ export function initializeDownloader() {
   const videoQualityField = document.querySelector("#video-quality-field");
   const videoQuality = document.querySelector("#video-quality");
   const videoQualityValue = document.querySelector("#video-quality-value");
-  const videoQualities = [240, 360, 480, 720, 1080, 1440, 2160];
   function updateVideoQuality() {
     const index = Number(videoQuality.value);
-    videoQualityValue.value = index === 6 ? "4K" : `${videoQualities[index]}p`;
+    videoQualityValue.value = videoQualityLabel(index);
     videoQuality.style.setProperty("--quality-color", `hsl(${120 - index * 20} 70% 42%)`);
     videoQuality.style.setProperty("--quality-progress", `${index / 6 * 100}%`);
   }
@@ -291,97 +250,14 @@ export function initializeDownloader() {
   const progress = document.querySelector("#download-progress");
   const progressDetails = document.querySelector("#download-transfer-details");
   const downloadLinkLabel = document.querySelector("#download-link-label");
-  const csvFile = document.querySelector("#download-csv-file");
-  const csvRowsField = document.querySelector("#download-csv-rows");
-  const csvPrepareButton = document.querySelector("#download-csv-prepare");
-  const csvStartButton = document.querySelector("#download-csv-start");
-  const csvStatus = document.querySelector("#download-csv-status");
   const status = document.querySelector("#download-status");
   let downloadSource = "link";
   let selectedBrowseVideo = false;
   let activeDownload = null;
-  let loadedCsvRows = [];
-  let csvBatch = null;
-
-  csvPrepareButton.addEventListener("click", async () => {
-    const file = csvFile.files?.[0];
-    if (!file) {
-      csvStatus.textContent = "Choose a CSV file first.";
-      return;
-    }
-    csvPrepareButton.disabled = true;
-    try {
-      const records = parseCsv(await file.text());
-      if (records.length < 2) throw new Error("The CSV needs a header row and at least one track row.");
-      const headers = records[0].map((header) => header.trim().toLowerCase());
-      const columns = {
-        track: headers.indexOf("track name"),
-        artist: headers.indexOf("artist name"),
-        album: headers.indexOf("album"),
-      };
-      if (Object.values(columns).some((index) => index < 0)) {
-        throw new Error("Required columns: Track Name, Artist Name, and Album.");
-      }
-      loadedCsvRows = records.slice(1).map((record, index) => ({
-        rowNumber: index + 1,
-        track: (record[columns.track] || "").trim(),
-        artist: (record[columns.artist] || "").trim(),
-        album: (record[columns.album] || "").trim(),
-      }));
-      const validCount = loadedCsvRows.filter((row) => row.track && row.artist).length;
-      if (!validCount) throw new Error("No rows have both a Track Name and Artist Name.");
-      csvStartButton.disabled = false;
-      csvStatus.textContent = `Loaded ${validCount} tracks across ${loadedCsvRows.length} data rows. Blank or incomplete rows will be skipped.`;
-    } catch (error) {
-      loadedCsvRows = [];
-      csvStartButton.disabled = true;
-      csvStatus.textContent = error.message || "Could not read this CSV file.";
-    } finally {
-      csvPrepareButton.disabled = false;
-    }
-  });
-
-  function startNextCsvTrack() {
-    if (!csvBatch) return;
-    if (csvBatch.cancelled) {
-      csvStatus.textContent = `CSV queue cancelled after ${csvBatch.index} of ${csvBatch.items.length} tracks.`;
-      csvBatch = null;
-      csvStartButton.disabled = false;
-      return;
-    }
-    if (csvBatch.index >= csvBatch.items.length) {
-      csvStatus.textContent = `CSV downloads finished: ${csvBatch.items.length - csvBatch.failed} succeeded, ${csvBatch.failed} failed.`;
-      csvBatch = null;
-      csvStartButton.disabled = false;
-      return;
-    }
-    const item = csvBatch.items[csvBatch.index];
-    setDownloadSource("link");
-    youtubeUrl.value = `ytsearch: ${item.track} - ${item.artist}${item.album ? ` ${item.album}` : ""}`;
-    selectedBrowseVideo = false;
-    setStatus(status, `CSV row ${item.rowNumber} · track ${csvBatch.index + 1} of ${csvBatch.items.length}`);
-    form.requestSubmit();
-  }
-
-  csvStartButton.addEventListener("click", () => {
-    if (activeDownload || csvBatch) return;
-    try {
-      const selectedRows = selectCsvRows(loadedCsvRows, csvRowsField.value);
-      const items = selectedRows.filter((row) => row.track && row.artist);
-      if (!items.length) throw new Error("The selected rows contain no complete track and artist entries.");
-      csvBatch = { items, index: 0, failed: 0, cancelled: false };
-      csvStartButton.disabled = true;
-      csvStatus.textContent = `Starting ${items.length} downloads in order…`;
-      startNextCsvTrack();
-    } catch (error) {
-      csvStatus.textContent = error.message;
-    }
-  });
 
   cancelButton.addEventListener("click", async () => {
     if (!activeDownload) return;
     activeDownload.cancelled = true;
-    if (csvBatch) csvBatch.cancelled = true;
     cancelButton.disabled = true;
     setStatus(status, "Cancelling download and cleaning up…");
     activeDownload.controller?.abort();
@@ -567,6 +443,8 @@ export function initializeDownloader() {
     // Keep the user's format choice stable while the asynchronous download,
     // polling, and transfer steps run.
     const requestedKind = downloadKind.value;
+    const selectedVideoHeight = videoHeightForSliderValue(videoQuality.value);
+    const requestedVideoHeight = requestedKind === "video" ? selectedVideoHeight : null;
     submitButton.disabled = true;
     cancelButton.hidden = false;
     cancelButton.disabled = false;
@@ -588,7 +466,7 @@ export function initializeDownloader() {
         throw new Error("Puffin media storage limit reached. Delete files or raise the limit before downloading.");
       }
       setStatus(status, "Connecting to the Pi…");
-      await checkPi(baseUrl);
+      await checkPi(baseUrl, requestedVideoHeight);
 
       const downloadTarget = /^https?:\/\//i.test(entered)
         ? entered
@@ -599,11 +477,15 @@ export function initializeDownloader() {
         body: JSON.stringify({
           url: downloadTarget,
           kind: requestedKind,
-          video_height: videoQualities[Number(videoQuality.value)],
+          video_height: selectedVideoHeight,
           preferred_subtitle_language: navigator.language || "en",
           supported_audio_formats: requestedKind === "audio" ? getSupportedAudioFormats() : [],
         }),
       });
+      if (requestedVideoHeight !== null && job.requested_video_height !== requestedVideoHeight) {
+        await cancelPiDownload(baseUrl, job.id);
+        throw new Error("The Pi did not accept the selected video resolution. Update and restart the Pi downloader service, then retry.");
+      }
       jobId = job.id;
       activeDownload.baseUrl = baseUrl;
       activeDownload.jobId = jobId;
@@ -620,8 +502,8 @@ export function initializeDownloader() {
           progressDetails.textContent = "Waiting for the Pi to start the download…";
         }
         else if (currentJob.status === "converting") {
-          setStatus(status, "Converting media on the Pi…");
-          progressDetails.textContent = "Converting media on the Pi…";
+          setStatus(status, "Combining video and audio on the Pi…");
+          progressDetails.textContent = "Combining video and audio on the Pi…";
         }
         else if (currentJob.progress) {
           setStatus(status, `Downloading on the Pi · ${Math.round(currentJob.progress)}%`);
@@ -643,6 +525,14 @@ export function initializeDownloader() {
       if (requestedKind === "video" && !currentJob.mime_type?.startsWith("video/")) {
         throw new Error("The Pi did not produce a video file for this request.");
       }
+      if (requestedVideoHeight !== null) {
+        if (!Number.isInteger(currentJob.actual_video_height)) {
+          throw new Error("The Pi could not verify the downloaded video's resolution. Update and restart the Pi downloader service, then retry.");
+        }
+        if (currentJob.actual_video_height > requestedVideoHeight) {
+          throw new Error(`The Pi downloaded ${videoHeightLabel(currentJob.actual_video_height)}, above the selected ${videoHeightLabel(requestedVideoHeight)} maximum. The file was rejected.`);
+        }
+      }
 
       try {
         await guardReadyPiDownload({
@@ -656,7 +546,10 @@ export function initializeDownloader() {
       }
 
       progress.value = 100;
-      progressDetails.textContent = "Download complete · Saving to your Puffin library";
+      const actualVideoDescription = requestedVideoHeight === null
+        ? ""
+        : `${videoHeightLabel(currentJob.actual_video_height)} video (maximum ${videoHeightLabel(requestedVideoHeight)})`;
+      progressDetails.textContent = `${actualVideoDescription ? `${actualVideoDescription} · ` : ""}Download complete · Saving to your Puffin library`;
       setStatus(status, "Receiving file from the Pi…");
       transferStarted = true;
       const fileResponse = await fetch(`${baseUrl}/api/downloads/${jobId}/file`, { signal: activeDownload.controller.signal });
@@ -728,15 +621,15 @@ export function initializeDownloader() {
       recordPuffinActivity("downloads").catch((statsError) => console.warn("Could not record completed download:", statsError));
       window.dispatchEvent(new Event("puffin:library-updated"));
 
+      const savedResolution = actualVideoDescription ? `${actualVideoDescription} ` : "";
       try {
         const cleanedUp = await confirmPiSavedFile(baseUrl, jobId);
-        if (cleanedUp) setStatus(status, "Saved to your Puffin library on this device.");
-        else setStatus(status, "Saved locally. The Pi will remove its temporary copy after it expires.");
+        if (cleanedUp) setStatus(status, `Saved ${savedResolution}to your Puffin library on this device.`);
+        else setStatus(status, `Saved ${savedResolution}locally. The Pi will remove its temporary copy after it expires.`);
       } catch {
-        setStatus(status, "Saved locally. The Pi could not confirm cleanup; its temporary copy will expire automatically.");
+        setStatus(status, `Saved ${savedResolution}locally. The Pi could not confirm cleanup; its temporary copy will expire automatically.`);
       }
     } catch (error) {
-      if (csvBatch && !activeDownload.cancelled) csvBatch.failed += 1;
       setStatus(status, activeDownload.cancelled || error.name === "AbortError" ? "Download cancelled. Partial transfer was discarded."
         : error.message || "The download failed.");
       if (jobId && !savedLocally && !activeDownload.cancelled && !(error instanceof MediaCapacityError)) {
@@ -757,18 +650,12 @@ export function initializeDownloader() {
         }
       }
     } finally {
-      const wasCancelled = activeDownload?.cancelled;
       submitButton.disabled = false;
       cancelButton.hidden = true;
       cancelButton.disabled = false;
       activeDownload = null;
       progress.hidden = true;
       progressDetails.hidden = true;
-      if (csvBatch) {
-        if (wasCancelled) csvBatch.cancelled = true;
-        else csvBatch.index += 1;
-        window.setTimeout(startNextCsvTrack, 300);
-      }
     }
   });
 }

@@ -178,7 +178,7 @@
                   <button id="youtube-search-button" class="secondary-button" type="button">Search</button>
                 </div>
                 <label id="video-quality-field" class="video-quality" for="video-quality">
-                  <span>Video quality <output id="video-quality-value" for="video-quality">720p</output></span>
+                  <span>Maximum video resolution <output id="video-quality-value" for="video-quality">720p</output></span>
                   <input id="video-quality" type="range" min="0" max="6" step="1" value="3" />
                   <span class="video-quality-labels" aria-hidden="true"><span>240p</span><span>360p</span><span>480p</span><span>720p</span><span>1080p</span><span>1440p</span><span>4K</span></span>
                 </label>
@@ -194,21 +194,6 @@
               <progress id="download-progress" max="100" value="0" hidden></progress>
               <p id="download-transfer-details" class="download-transfer-details" hidden></p>
               <p id="download-status" class="muted" role="status" aria-live="polite"></p>
-              <section class="csv-download-section" aria-labelledby="csv-download-title">
-                <h2 id="csv-download-title">Bulk download from CSV</h2>
-                <p class="muted">Choose a CSV with columns Track Name, Artist Name, and Album. Download all data rows or specify data row numbers (header excluded), such as 1,3-5.</p>
-                <label class="form-field" for="download-csv-file"><span>CSV file</span>
-                  <input id="download-csv-file" type="file" accept=".csv,text/csv" />
-                </label>
-                <div class="csv-download-controls">
-                  <label class="form-field" for="download-csv-rows"><span>Rows to download</span>
-                    <input id="download-csv-rows" type="text" placeholder="All rows, or e.g. 1,3-5" autocomplete="off" />
-                  </label>
-                  <button id="download-csv-prepare" class="secondary-button" type="button">Load CSV</button>
-                </div>
-                <p id="download-csv-status" class="muted" role="status" aria-live="polite">No CSV loaded.</p>
-                <button id="download-csv-start" class="secondary-button" type="button" disabled>Download selected rows</button>
-              </section>
             </form>
           </section>
 
