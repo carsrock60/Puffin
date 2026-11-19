@@ -26,6 +26,8 @@ DOWNLOAD_DIR = Path(os.environ.get("PUFFIN_DOWNLOAD_DIR", "~/puffin-downloads"))
 MAX_DOWNLOAD_BYTES = int(os.environ.get("PUFFIN_MAX_DOWNLOAD_BYTES", str(2 * 1024**3)))
 MIN_FREE_BYTES = int(os.environ.get("PUFFIN_MIN_FREE_BYTES", str(1024**3)))
 JOB_RETENTION_SECONDS = int(os.environ.get("PUFFIN_JOB_RETENTION_SECONDS", "3600"))
+YTDLP_STALL_SECONDS = int(os.environ.get("PUFFIN_YTDLP_STALL_SECONDS", "180"))
+YTDLP_SOCKET_TIMEOUT = int(os.environ.get("PUFFIN_YTDLP_SOCKET_TIMEOUT", "20"))
 VIDEO_QUALITY_OPTIONS = (240, 360, 480, 720, 1080, 1440, 2160)
 ALLOWED_ORIGINS = {
     origin.strip().rstrip("/")
@@ -38,6 +40,11 @@ JOBS_LOCK = threading.RLock()
 PROGRESS_PATTERN = re.compile(r"\[download\]\s+(\d+(?:\.\d+)?)%")
 SPEED_PATTERN = re.compile(r"\bat\s+([0-9.]+\s*[KMG]?i?B/s)")
 ETA_PATTERN = re.compile(r"\bETA\s+(\d{2}:\d{2}(?::\d{2})?)")
+RATE_LIMIT_MESSAGE = (
+    "YouTube rate-limited the Pi, so Puffin stopped retrying instead of leaving the download hanging. "
+    "Wait several minutes before trying again, and avoid starting several downloads or searches in a row. "
+    "If it keeps happening, the Pi's network address is being throttled by YouTube."
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 LOGGER = logging.getLogger("puffin-downloader")
@@ -142,6 +149,9 @@ def _yt_dlp_environment() -> dict[str, str]:
     env = dict(os.environ)
     directories = [str(binary.parent) for _, binary in _find_js_runtimes()]
     env["PATH"] = os.pathsep.join(filter(None, [*directories, env.get("PATH", "")]))
+    # Emit download progress as it happens even though stdout is a pipe;
+    # otherwise a working download can look stalled at 0%.
+    env["PYTHONUNBUFFERED"] = "1"
     return env
 
 
@@ -193,6 +203,11 @@ def _terminate_process_group(process: subprocess.Popen) -> None:
 def _safe_diagnostic(line: str) -> str:
     line = re.sub(r"https?://\S+", "[URL]", line)
     return " ".join(line.split())[:240]
+
+
+def _is_rate_limit_line(line: str) -> bool:
+    lowered = line.lower()
+    return "http error 429" in lowered or "too many requests" in lowered
 
 
 def _yt_dlp_failure_message(lines: list[str], return_code: int) -> str:
@@ -478,6 +493,31 @@ def _remove_work_directory(job: dict) -> None:
         shutil.rmtree(work_dir, ignore_errors=True)
 
 
+def _subtitle_language_filter(language: object) -> str:
+    """Limit subtitle downloads to the browser language plus English.
+
+    Puffin keeps a single subtitle track, so requesting every available
+    language (``--sub-langs all``) makes yt-dlp fetch dozens of translated
+    tracks before the job reports anything, which looks like a hang.
+    """
+    normalized = _normalize_subtitle_language(language)
+    base = normalized.split("-", 1)[0]
+    languages: list[str] = []
+    for value in (normalized, f"{normalized}.*", base, f"{base}.*", "en", "en.*"):
+        if value not in languages:
+            languages.append(value)
+    return ",".join([*languages, "-live_chat"])
+
+
+def _run_download_worker(job_id: str) -> None:
+    """Never leave a job stuck in a running state if the worker crashes."""
+    try:
+        _run_download(job_id)
+    except Exception:
+        LOGGER.exception("Download worker for job %s crashed", job_id)
+        _fail_job(job_id, "The Pi downloader stopped unexpectedly. Restart the service and try again.")
+
+
 def _run_download(job_id: str) -> None:
     with JOBS_LOCK:
         job = JOBS.get(job_id)
@@ -501,12 +541,20 @@ def _run_download(job_id: str) -> None:
         "--no-write-info-json",
         "--no-write-thumbnail",
         "--no-overwrites",
+        "--socket-timeout",
+        str(YTDLP_SOCKET_TIMEOUT),
+        "--retries",
+        "3",
+        "--fragment-retries",
+        "3",
         "--retry-sleep",
-        "http:linear=1:5",
+        "http:exp=1:8",
         "--retry-sleep",
-        "fragment:linear=1:5",
+        "fragment:exp=1:8",
         "--retry-sleep",
-        "extractor:linear=1:3",
+        "extractor:exp=1:8",
+        "--extractor-retries",
+        "2",
         "--max-filesize",
         str(MAX_DOWNLOAD_BYTES),
         "--output",
@@ -523,7 +571,7 @@ def _run_download(job_id: str) -> None:
             "--write-subs",
             "--write-auto-subs",
             "--sub-langs",
-            "all,-live_chat",
+            _subtitle_language_filter(job.get("preferred_subtitle_language", "en")),
             "--sub-format",
             "vtt/best",
             "--convert-subs",
@@ -535,6 +583,26 @@ def _run_download(job_id: str) -> None:
     process = None
     compatible_format_missing = False
     output_tail = []
+    stalled = False
+    rate_limited = False
+    rate_limit_hits = 0
+    last_output_at = [time.monotonic()]
+
+    def stop_stalled_download() -> None:
+        nonlocal stalled
+        while process is not None and process.poll() is None:
+            time.sleep(2)
+            if time.monotonic() - last_output_at[0] <= YTDLP_STALL_SECONDS:
+                continue
+            stalled = True
+            LOGGER.warning(
+                "Download job %s produced no output for %s seconds; stopping yt-dlp.",
+                job_id,
+                YTDLP_STALL_SECONDS,
+            )
+            _signal_process_group(process, force=True)
+            return
+
     try:
         process = subprocess.Popen(
             command,
@@ -555,18 +623,34 @@ def _run_download(job_id: str) -> None:
             if current_job["cancel_requested"]:
                 _signal_process_group(process)
 
+        threading.Thread(target=stop_stalled_download, daemon=True).start()
+
         for line in process.stdout or []:
+            last_output_at[0] = time.monotonic()
             output_tail.append(line.strip())
             if len(output_tail) > 40:
                 del output_tail[0]
             if "Requested format is not available" in line:
                 compatible_format_missing = True
+            if _is_rate_limit_line(line):
+                rate_limit_hits += 1
             with JOBS_LOCK:
                 current_job = JOBS.get(job_id)
                 if not current_job:
                     _signal_process_group(process)
                     break
                 if current_job["cancel_requested"]:
+                    _signal_process_group(process)
+                    break
+                # YouTube throttling during extraction means retrying will
+                # just spin for minutes. Stop immediately; during an active
+                # media transfer, allow one retry before giving up.
+                if rate_limit_hits and (rate_limit_hits >= 2 or not current_job.get("progress")):
+                    rate_limited = True
+                    LOGGER.warning(
+                        "Download job %s was rate-limited by YouTube; stopping yt-dlp instead of retrying.",
+                        job_id,
+                    )
                     _signal_process_group(process)
                     break
                 if "[Merger]" in line or ("[ExtractAudio]" in line and "Not converting audio" not in line):
@@ -585,6 +669,14 @@ def _run_download(job_id: str) -> None:
                     current_job["eta"] = eta_match.group(1)
 
         return_code = process.wait()
+        if rate_limited:
+            raise DownloadFailure(RATE_LIMIT_MESSAGE)
+        if stalled:
+            raise DownloadFailure(
+                f"The Pi downloader produced no output for {YTDLP_STALL_SECONDS} seconds, so it was stopped. "
+                "YouTube may be slow to respond or the Pi may be solving its JavaScript challenge too slowly. "
+                "Try again, and raise PUFFIN_YTDLP_STALL_SECONDS in the Pi service environment if this video legitimately needs longer."
+            )
         with JOBS_LOCK:
             current_job = JOBS.get(job_id)
             if not current_job:
@@ -862,6 +954,13 @@ class PuffinHandler(BaseHTTPRequestHandler):
             except subprocess.TimeoutExpired:
                 self._json(504, {"error": "YouTube search timed out. Try again in a moment."})
                 return
+            except subprocess.CalledProcessError as error:
+                detail = (error.stderr or "").lower() if isinstance(error.stderr, str) else ""
+                if _is_rate_limit_line(detail):
+                    self._json(429, {"error": "YouTube rate-limited the Pi. Wait a few minutes before searching again."})
+                else:
+                    self._json(502, {"error": "YouTube search failed. Check the Pi connection and try again."})
+                return
             except Exception as error:
                 LOGGER.warning("YouTube search failed: %s", type(error).__name__)
                 self._json(502, {"error": "YouTube search failed. Check the Pi connection and try again."})
@@ -1064,7 +1163,7 @@ class PuffinHandler(BaseHTTPRequestHandler):
             JOBS[job_id] = job
 
         try:
-            threading.Thread(target=_run_download, args=(job_id,), daemon=True).start()
+            threading.Thread(target=_run_download_worker, args=(job_id,), daemon=True).start()
         except RuntimeError as error:
             _fail_job(job_id, "The Pi could not start a download worker. Restart the downloader service and try again.")
             LOGGER.error("Could not start download job %s worker: %s", job_id, type(error).__name__)

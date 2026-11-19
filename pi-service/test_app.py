@@ -86,6 +86,17 @@ class VideoPipelineTests(unittest.TestCase):
         self.assertIn("AAC", message)
         self.assertIn("will not re-encode", message)
 
+    def test_rate_limit_lines_are_recognized(self):
+        self.assertTrue(app._is_rate_limit_line("ERROR: Unable to download webpage: HTTP Error 429: Too Many Requests"))
+        self.assertTrue(app._is_rate_limit_line("too many requests"))
+        self.assertFalse(app._is_rate_limit_line("ERROR: Private video"))
+
+    def test_rate_limit_failure_is_actionable(self):
+        message = app._yt_dlp_failure_message(["ERROR: HTTP Error 429: Too Many Requests"], 1)
+
+        self.assertIn("rate-limited", message)
+        self.assertIn("Wait", message)
+
 
 class JavaScriptRuntimeTests(unittest.TestCase):
     def test_every_detected_runtime_is_passed_to_yt_dlp(self):
@@ -181,6 +192,14 @@ class SubtitleSelectionTests(unittest.TestCase):
     def test_invalid_preferred_language_falls_back_to_english(self):
         self.assertEqual(app._normalize_subtitle_language("fr-CA"), "fr-CA")
         self.assertEqual(app._normalize_subtitle_language("../tmp"), "en")
+
+    def test_subtitle_downloads_are_limited_to_browser_language_and_english(self):
+        self.assertEqual(app._subtitle_language_filter("fr-CA"), "fr-CA,fr-CA.*,fr,fr.*,en,en.*,-live_chat")
+        self.assertEqual(app._subtitle_language_filter("en"), "en,en.*,-live_chat")
+        self.assertNotIn("all", app._subtitle_language_filter("de"))
+
+    def test_invalid_subtitle_language_filter_uses_english(self):
+        self.assertEqual(app._subtitle_language_filter("../tmp"), "en,en.*,-live_chat")
 
 
 if __name__ == "__main__":

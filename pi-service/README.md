@@ -90,6 +90,10 @@ cd ~/Puffin/pi-service
 sudo systemctl restart puffin-downloader
 ```
 
+### If YouTube rate-limits the Pi
+
+YouTube can return `HTTP Error 429: Too Many Requests` to the Pi's network address. yt-dlp normally retries these with backoff, which used to leave the app showing "Downloading on the Pi…" at 0% for minutes. The service now stops as soon as a rate limit is seen before the media transfer starts (or after a second one mid-transfer) and reports that YouTube rate-limited the Pi. Wait several minutes, then retry once. Quickly repeated downloads and searches make the block last longer. Subtitle downloads are limited to the browser language plus English for the same reason: requesting every translated caption track produced many extra requests.
+
 Set the allowed browser origins. Include the Vercel site origin and the local Vite origin used during development. Origins have no trailing slash. For example, if your deployed app is `https://puffin.vercel.app`, include that exact origin:
 
 ```sh
@@ -126,7 +130,11 @@ PUFFIN_ALLOWED_ORIGINS=https://your-puffin-site.vercel.app,http://localhost:5173
 PUFFIN_DOWNLOAD_DIR=/home/REPLACE_ME/puffin-downloads
 PUFFIN_MAX_DOWNLOAD_BYTES=2147483648
 PUFFIN_MIN_FREE_BYTES=1073741824
+PUFFIN_YTDLP_STALL_SECONDS=180
+PUFFIN_YTDLP_SOCKET_TIMEOUT=20
 ```
+
+`PUFFIN_YTDLP_STALL_SECONDS` stops a download that receives no output from yt-dlp for that many seconds, so a stalled extractor fails with a clear error instead of leaving the job in "downloading" forever. Increase it on very slow Pi models or for unusually large videos.
 
 Replace the placeholder values. The systemd example includes Deno's install directory in `PATH`; Node.js and QuickJS are already available through `/usr/bin` or `/usr/local/bin`. Update that line if the runtime is installed elsewhere. Then enable the service:
 

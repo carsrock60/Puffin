@@ -510,7 +510,10 @@ export function initializeDownloader() {
           const details = [currentJob.speed, currentJob.eta ? `${currentJob.eta} remaining` : ""].filter(Boolean);
           progressDetails.textContent = details.length ? details.join(" · ") : "Calculating transfer speed and remaining time…";
         }
-        else setStatus(status, "Downloading on the Pi…");
+        else {
+          setStatus(status, "Downloading on the Pi…");
+          progressDetails.textContent = "Waiting for the Pi to receive data from YouTube…";
+        }
 
         await sleep(1200);
         currentJob = await requestJson(baseUrl, `/api/downloads/${jobId}`);
