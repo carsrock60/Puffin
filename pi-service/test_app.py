@@ -189,6 +189,27 @@ class SubtitleSelectionTests(unittest.TestCase):
             self.assertEqual(app._choose_subtitle_file([french, english, canadian_french], "fr-CA"), canadian_french)
             self.assertEqual(app._choose_subtitle_file([french, english], "de-DE"), english)
 
+    def test_subtitle_pass_reuses_the_media_download_metadata(self):
+        with tempfile.TemporaryDirectory() as directory:
+            work_dir = Path(directory)
+            info_json = work_dir / "Video [id].info.json"
+            info_json.write_text("{}", encoding="utf-8")
+            command = app._subtitle_command({"preferred_subtitle_language": "fr-CA"}, work_dir, info_json)
+
+        self.assertIn("--skip-download", command)
+        self.assertIn("--load-info-json", command)
+        self.assertIn(str(info_json), command)
+        self.assertIn("--write-subs", command)
+        self.assertIn("fr-CA", " ".join(command))
+        self.assertNotIn("--format", command)
+
+    def test_public_job_reports_the_extraction_stage(self):
+        public_job = app._public_job({
+            "id": "test-job", "status": "downloading", "progress": 0, "kind": "audio", "stage": "Contacting YouTube",
+        })
+
+        self.assertEqual(public_job["stage"], "Contacting YouTube")
+
     def test_invalid_preferred_language_falls_back_to_english(self):
         self.assertEqual(app._normalize_subtitle_language("fr-CA"), "fr-CA")
         self.assertEqual(app._normalize_subtitle_language("../tmp"), "en")

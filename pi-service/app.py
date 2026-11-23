@@ -28,6 +28,7 @@ MIN_FREE_BYTES = int(os.environ.get("PUFFIN_MIN_FREE_BYTES", str(1024**3)))
 JOB_RETENTION_SECONDS = int(os.environ.get("PUFFIN_JOB_RETENTION_SECONDS", "3600"))
 YTDLP_STALL_SECONDS = int(os.environ.get("PUFFIN_YTDLP_STALL_SECONDS", "180"))
 YTDLP_SOCKET_TIMEOUT = int(os.environ.get("PUFFIN_YTDLP_SOCKET_TIMEOUT", "20"))
+SUBTITLE_TIMEOUT_SECONDS = int(os.environ.get("PUFFIN_SUBTITLE_TIMEOUT_SECONDS", "45"))
 VIDEO_QUALITY_OPTIONS = (240, 360, 480, 720, 1080, 1440, 2160)
 ALLOWED_ORIGINS = {
     origin.strip().rstrip("/")
@@ -448,6 +449,7 @@ def _public_job(job: dict) -> dict:
         "subtitles_available": bool(job.get("subtitle_path")),
         "subtitle_size": job.get("subtitle_size", 0),
         "subtitle_language": job.get("subtitle_language"),
+        "stage": job.get("stage"),
         "error": job.get("error"),
     }
     if job.get("kind") == "video":
@@ -509,6 +511,61 @@ def _subtitle_language_filter(language: object) -> str:
     return ",".join([*languages, "-live_chat"])
 
 
+def _subtitle_command(job: dict, work_dir: Path, info_json: Path) -> list[str]:
+    """Build a subtitle-only pass that reuses the media download's metadata.
+
+    Downloading subtitles inside the media command makes yt-dlp fetch them
+    before the media transfer starts, which is slow on a Pi and looks like a
+    stuck download. Loading the saved info JSON avoids re-extracting (and
+    re-solving YouTube's challenge) for this pass.
+    """
+    return _yt_dlp_command(
+        "--skip-download",
+        "--load-info-json",
+        str(info_json),
+        "--write-subs",
+        "--write-auto-subs",
+        "--sub-langs",
+        _subtitle_language_filter(job.get("preferred_subtitle_language", "en")),
+        "--sub-format",
+        "vtt/best",
+        "--convert-subs",
+        "vtt",
+        "--no-progress",
+        "--no-warnings",
+        "--output",
+        str(work_dir / "%(title).160s [%(id)s].%(ext)s"),
+    )
+
+
+def _download_subtitles(job: dict, work_dir: Path) -> None:
+    info_json = next((path for path in work_dir.iterdir() if path.name.endswith(".info.json")), None)
+    if info_json is None:
+        LOGGER.info("Video download job %s has no info JSON; skipping subtitles", job["id"])
+        return
+    try:
+        subtitle_started = time.monotonic()
+        result = subprocess.run(
+            _subtitle_command(job, work_dir, info_json),
+            capture_output=True,
+            text=True,
+            timeout=SUBTITLE_TIMEOUT_SECONDS,
+            env=_yt_dlp_environment(),
+        )
+        LOGGER.info(
+            "Subtitle pass for job %s finished in %.1fs (exit %s)",
+            job["id"],
+            time.monotonic() - subtitle_started,
+            result.returncode,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        LOGGER.warning("Subtitle download for job %s failed: %s", job["id"], type(error).__name__)
+        return
+    if result.returncode != 0:
+        detail = _safe_diagnostic((result.stderr or "").strip().splitlines()[-1]) if result.stderr else "no output"
+        LOGGER.warning("Subtitle download for job %s exited %s: %s", job["id"], result.returncode, detail)
+
+
 def _run_download_worker(job_id: str) -> None:
     """Never leave a job stuck in a running state if the worker crashes."""
     try:
@@ -538,7 +595,6 @@ def _run_download(job_id: str) -> None:
         "--no-playlist",
         "--newline",
         "--progress",
-        "--no-write-info-json",
         "--no-write-thumbnail",
         "--no-overwrites",
         "--socket-timeout",
@@ -568,14 +624,7 @@ def _run_download(job_id: str) -> None:
         ])
     else:
         command.extend([
-            "--write-subs",
-            "--write-auto-subs",
-            "--sub-langs",
-            _subtitle_language_filter(job.get("preferred_subtitle_language", "en")),
-            "--sub-format",
-            "vtt/best",
-            "--convert-subs",
-            "vtt",
+            "--write-info-json",
         ])
         command.extend(_video_format_options(job.get("video_height", 720)))
     command.append(job["url"])
@@ -586,6 +635,8 @@ def _run_download(job_id: str) -> None:
     stalled = False
     rate_limited = False
     rate_limit_hits = 0
+    started_at = time.monotonic()
+    first_progress_logged = [False]
     last_output_at = [time.monotonic()]
 
     def stop_stalled_download() -> None:
@@ -660,7 +711,24 @@ def _run_download(job_id: str) -> None:
                 if match:
                     current_job["status"] = "downloading"
                     current_job["progress"] = min(99, max(0, float(match.group(1))))
+                    current_job["stage"] = None
                     current_job["updated_at"] = time.time()
+                    if not first_progress_logged[0]:
+                        first_progress_logged[0] = True
+                        LOGGER.info(
+                            "Download job %s reached media data after %.1fs",
+                            job_id,
+                            time.monotonic() - started_at,
+                        )
+                elif not current_job.get("progress"):
+                    lowered_line = line.lower()
+                    if any(term in lowered_line for term in (
+                        "extracting url", "downloading webpage", "client config",
+                        "player api", "solving", "js challenge", "nsig",
+                    )):
+                        current_job["stage"] = "Contacting YouTube"
+                    elif "downloading subtitles" in lowered_line:
+                        current_job["stage"] = "Fetching subtitles"
                 speed_match = SPEED_PATTERN.search(line)
                 eta_match = ETA_PATTERN.search(line)
                 if speed_match:
@@ -698,26 +766,25 @@ def _run_download(job_id: str) -> None:
             if job["kind"] == "audio":
                 raise DownloadFailure(download_error)
 
-        subtitle_files = [
-            path for path in work_dir.iterdir()
-            if path.is_file() and path.suffix.lower() == ".vtt" and path.stat().st_size <= 5 * 1024 * 1024
-        ]
-        subtitle_file = _choose_subtitle_file(subtitle_files, job.get("preferred_subtitle_language", "en"))
-        subtitle_language = _subtitle_language_from_path(subtitle_file) if subtitle_file else None
-        if subtitle_file:
-            LOGGER.info(
-                "Video download job %s found subtitle languages %s; selected %s",
-                job_id,
-                ", ".join(sorted({_subtitle_language_from_path(path) for path in subtitle_files})),
-                subtitle_language,
-            )
-        else:
-            subtitle_output = [line for line in output_tail if "subtitle" in line.lower()]
-            LOGGER.info(
-                "Video download job %s found no downloadable WebVTT subtitle files; yt-dlp subtitle output: %s",
-                job_id,
-                " | ".join(subtitle_output[-5:]) or "none",
-            )
+        subtitle_file = None
+        subtitle_language = None
+        if job["kind"] == "video":
+            _download_subtitles(job, work_dir)
+            subtitle_files = [
+                path for path in work_dir.iterdir()
+                if path.is_file() and path.suffix.lower() == ".vtt" and path.stat().st_size <= 5 * 1024 * 1024
+            ]
+            subtitle_file = _choose_subtitle_file(subtitle_files, job.get("preferred_subtitle_language", "en"))
+            subtitle_language = _subtitle_language_from_path(subtitle_file) if subtitle_file else None
+            if subtitle_file:
+                LOGGER.info(
+                    "Video download job %s found subtitle languages %s; selected %s",
+                    job_id,
+                    ", ".join(sorted({_subtitle_language_from_path(path) for path in subtitle_files})),
+                    subtitle_language,
+                )
+            else:
+                LOGGER.info("Video download job %s found no downloadable WebVTT subtitles", job_id)
         output_files = [
             path for path in work_dir.iterdir()
             if path.is_file() and path.suffix.lower() != ".vtt"
@@ -1143,6 +1210,7 @@ class PuffinHandler(BaseHTTPRequestHandler):
                 "video_height": video_height,
                 "preferred_subtitle_language": preferred_subtitle_language,
                 "status": "queued",
+                "stage": None,
                 "progress": 0,
                 "speed": None,
                 "eta": None,
@@ -1233,10 +1301,30 @@ def _remove_stale_files() -> None:
             shutil.rmtree(path, ignore_errors=True)
 
 
+def _warm_yt_dlp_capabilities() -> None:
+    """Run the slow yt-dlp capability probe before the first job needs it."""
+    try:
+        _yt_dlp_supports_js_runtimes()
+    except Exception:
+        LOGGER.exception("Could not probe yt-dlp capabilities")
+
+
 def main() -> None:
     DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
     _remove_stale_files()
     threading.Thread(target=_cleanup_expired_jobs, daemon=True).start()
+    threading.Thread(target=_warm_yt_dlp_capabilities, daemon=True).start()
+
+    runtimes = _find_js_runtimes()
+    LOGGER.info(
+        "JavaScript runtimes for yt-dlp: %s",
+        ", ".join(f"{name} ({binary})" for name, binary in runtimes) or "none found",
+    )
+    if runtimes and all(name == "quickjs" for name, _ in runtimes):
+        LOGGER.warning(
+            "Only QuickJS is available for YouTube's JavaScript challenge. QuickJS has no JIT and makes "
+            "downloads start very slowly on a Pi; install Node.js 20 or newer and restart the service."
+        )
 
     server = ThreadingHTTPServer((HOST, PORT), PuffinHandler)
     LOGGER.info("Puffin downloader listening on %s:%s", HOST, PORT)

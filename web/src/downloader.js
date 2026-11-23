@@ -512,7 +512,9 @@ export function initializeDownloader() {
         }
         else {
           setStatus(status, "Downloading on the Pi…");
-          progressDetails.textContent = "Waiting for the Pi to receive data from YouTube…";
+          progressDetails.textContent = currentJob.stage
+            ? `${currentJob.stage}…`
+            : "Waiting for the Pi to receive data from YouTube…";
         }
 
         await sleep(1200);

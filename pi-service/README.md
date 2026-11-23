@@ -26,11 +26,21 @@ export PATH="$HOME/.deno/bin:$PATH"
 deno --version
 ```
 
-On 32-bit Raspberry Pi OS, use Node.js 20 or newer instead. yt-dlp requires a recent runtime, so check the version and install a newer `linux-armv7l` build from [nodejs.org](https://nodejs.org/en/download) if the system package is older than 20:
+On 32-bit Raspberry Pi OS, use Node.js 20 or newer instead. Node's V8 engine runs YouTube's JavaScript challenge far faster than QuickJS, which has no JIT and can spend a minute or more on a Pi before a download starts. Raspberry Pi OS's `nodejs` package may be older than 20, so install an official 32-bit ARM build:
 
 ```sh
-sudo apt install -y nodejs
-node --version
+cd /tmp
+archive=$(curl -fsSL https://nodejs.org/dist/latest-v20.x/ | grep -o 'node-v[0-9.]*-linux-armv7l.tar.xz' | head -1)
+curl -fsSLO "https://nodejs.org/dist/latest-v20.x/$archive"
+mkdir -p "$HOME/node"
+tar -xJf "$archive" -C "$HOME/node" --strip-components=1
+"$HOME/node/bin/node" --version
+```
+
+The service checks `PATH` and common locations automatically. If Node is installed outside those, add this to `/etc/puffin-downloader.env`:
+
+```ini
+PUFFIN_JS_RUNTIMES=node:/home/YOUR_PI_USER/node/bin/node
 ```
 
 Then create the Python environment:
@@ -66,6 +76,10 @@ Environment=PATH=/home/YOUR_PI_USER/.deno/bin:/usr/local/sbin:/usr/local/bin:/us
 ```
 
 The line above includes Node.js and QuickJS locations (`/usr/bin`, `/usr/local/bin`) and Deno's installer directory. The service must be restarted after updating so it uses the new code and dependencies.
+
+### If downloads take a long time to start
+
+Before media bytes arrive, yt-dlp extracts video information and solves YouTube's JavaScript challenge. QuickJS interprets that JavaScript without a JIT, which can take a minute or more on a 32-bit Pi. Install Node.js 20+ as described above; the service prefers it over QuickJS automatically and reports the runtime it found at startup and in `/api/health`. Subtitles are fetched in a separate pass after the media download (reusing yt-dlp's saved info JSON), so subtitle requests no longer delay the start of the media transfer.
 
 ### If YouTube reports a JavaScript challenge failure
 
