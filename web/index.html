@@ -542,14 +542,20 @@
               </div>
               <form id="settings-musicatlas-form" class="settings-storage-form">
                 <label class="form-field" for="settings-musicatlas-key"><span>MusicAtlas API key</span><input id="settings-musicatlas-key" type="password" autocomplete="off" placeholder="Paste your API key" /></label>
-                <p class="muted settings-hint">Puffin saves this key on this device. <a href="https://musicatlas.ai/developer/request-key" target="_blank" rel="noreferrer">Get a free MusicAtlas API key</a>. The free tier includes 100 requests per day.</p>
-                <button class="primary-button" type="submit">Save MusicAtlas key</button>
+                <p class="muted settings-hint">Stored in this browser only, never in Puffin’s code or logs, and sent only to MusicAtlas when music picks load. <a href="https://musicatlas.ai/developer/request-key" target="_blank" rel="noreferrer">Get a free MusicAtlas API key</a>. The free tier includes 100 requests per day.</p>
+                <div class="settings-actions">
+                  <button class="primary-button" type="submit">Save MusicAtlas key</button>
+                  <button id="settings-musicatlas-remove" class="secondary-button" type="button">Remove saved key</button>
+                </div>
                 <p id="settings-home-status" class="muted" role="status" aria-live="polite"></p>
               </form>
               <form id="settings-acoustid-form" class="settings-storage-form">
                 <label class="form-field" for="settings-acoustid-key"><span>AcoustID application key</span><input id="settings-acoustid-key" type="password" autocomplete="off" placeholder="Paste your application key" /></label>
-                <p class="muted settings-hint">Used to identify local audio in your browser. <a href="https://acoustid.org/new-application" target="_blank" rel="noreferrer">Register a free application key</a>. AcoustID’s free service is for non-commercial use.</p>
-                <button class="primary-button" type="submit">Save AcoustID key</button>
+                <p class="muted settings-hint">Stored in this browser only. Lookups send the key, a fingerprint, and the duration to AcoustID over HTTPS; the audio file never leaves this device. <a href="https://acoustid.org/new-application" target="_blank" rel="noreferrer">Register a free application key</a>. AcoustID’s free service is for non-commercial use.</p>
+                <div class="settings-actions">
+                  <button class="primary-button" type="submit">Save AcoustID key</button>
+                  <button id="settings-acoustid-remove" class="secondary-button" type="button">Remove saved key</button>
+                </div>
                 <p id="settings-acoustid-status" class="muted" role="status" aria-live="polite"></p>
               </form>
               <div class="settings-clear-history">
@@ -602,7 +608,32 @@
             </section>
             <section data-settings-panel="privacy" hidden>
               <h2>Privacy</h2>
-              <p class="muted">Privacy and data controls are coming soon.</p>
+              <p class="muted">Puffin keeps your library in this browser. This page lists every way data leaves the device.</p>
+
+              <h3>Stays on this device</h3>
+              <ul class="settings-dataflow">
+                <li><strong>Media, artwork, subtitles, and playlists</strong><span>Saved in this browser’s storage (IndexedDB). They are never uploaded to Puffin or synced to another device.</span></li>
+                <li><strong>Listening history and statistics</strong><span>Recently played, watch progress, play counts, and library totals stay in this browser and are not sent anywhere.</span></li>
+                <li><strong>Settings and API keys</strong><span>Your Pi address, MusicAtlas key, and AcoustID key are saved in this browser only. Clearing site data erases them along with your library.</span></li>
+              </ul>
+
+              <h3>Sent to your Raspberry Pi</h3>
+              <p class="muted settings-dataflow-copy">When you search or download, Puffin sends the search phrase or video URL, the media type, the requested resolution, the subtitle language, and the audio formats this browser can play. The Pi fetches the media from YouTube and keeps a temporary copy in a private folder until this browser confirms it saved the file, or until the copy expires after one hour. The request travels over HTTPS through Tailscale directly from this browser; no Puffin server is involved.</p>
+
+              <h3>Sent to other services</h3>
+              <ul class="settings-dataflow">
+                <li><strong>YouTube</strong><span>Receives the search or video request from your Pi.</span></li>
+                <li><strong>MusicAtlas</strong><span>Receives the artist and title of the seed song plus your API key, only when music picks are enabled.</span></li>
+                <li><strong>AcoustID</strong><span>Receives an audio fingerprint, the track duration, and your application key when identifying songs. The audio file itself is never uploaded.</span></li>
+                <li><strong>MusicBrainz and Cover Art Archive</strong><span>Receive artist and title searches and release artwork requests during Smart Fill and metadata editing.</span></li>
+                <li><strong>LRCLIB</strong><span>Receives artist and title to look up lyrics.</span></li>
+                <li><strong>iTunes Search API</strong><span>Receives artist and title to find artwork for music picks.</span></li>
+                <li><strong>Puffin’s Smart Fill service (Groq)</strong><span>Receives the raw track title and candidate lists to rank matches. The Groq key stays on that server and is never stored in this browser.</span></li>
+                <li><strong>Vercel</strong><span>Serves the Puffin app and its Smart Fill endpoint; your library is not part of those requests.</span></li>
+              </ul>
+
+              <h3>What never leaves</h3>
+              <p class="muted settings-dataflow-copy">Your media files, playlists, listening history, and library statistics are never uploaded. Each service above receives only the small text, query, or fingerprint described, and handles it under its own privacy policy.</p>
             </section>
             <section data-settings-panel="about" hidden>
               <h2>About Puffin</h2>

@@ -224,7 +224,7 @@ def _yt_dlp_failure_message(lines: list[str], return_code: int) -> str:
             return (
                 "YouTube needs an external JavaScript runtime to solve its challenge, but the Pi service "
                 "could not find Deno, Node.js, QuickJS, or Bun. Deno has no 32-bit build: on 32-bit Raspberry "
-                "Pi OS install Node.js 20+ or QuickJS, then set PUFFIN_JS_RUNTIMES=node:/path/to/node (or "
+                "Pi OS install Node.js 22+ or QuickJS, then set PUFFIN_JS_RUNTIMES=node:/path/to/node (or "
                 "quickjs:/path/to/qjs) in /etc/puffin-downloader.env and restart the service. "
                 "See pi-service/README.md."
             )
@@ -313,6 +313,7 @@ def _ensure_supported_audio(path: Path, supported_formats: list[str], job: dict)
     output_path = path.with_suffix(".m4a")
     with JOBS_LOCK:
         job["status"] = "converting"
+        job["stage"] = "processing"
         job["progress"] = 99
         job["updated_at"] = time.time()
 
@@ -390,6 +391,7 @@ def _make_compatible_mp4(path: Path, job: dict, separate_audio: Path | None = No
 
     with JOBS_LOCK:
         job["status"] = "converting"
+        job["stage"] = "processing"
         job["progress"] = 99
         job["updated_at"] = time.time()
     conversion = subprocess.run(ffmpeg_args, capture_output=True, text=True)
@@ -582,11 +584,13 @@ def _run_download(job_id: str) -> None:
             return
         if job["cancel_requested"]:
             job["status"] = "cancelled"
+            job["stage"] = "cancelled"
             job["worker_active"] = False
             job["updated_at"] = time.time()
             _remove_work_directory(job)
             return
         job["status"] = "downloading"
+        job["stage"] = "resolving"
         job["updated_at"] = time.time()
 
     work_dir = Path(job["work_dir"])
@@ -706,12 +710,13 @@ def _run_download(job_id: str) -> None:
                     break
                 if "[Merger]" in line or ("[ExtractAudio]" in line and "Not converting audio" not in line):
                     current_job["status"] = "converting"
+                    current_job["stage"] = "processing"
                     current_job["updated_at"] = time.time()
                 match = PROGRESS_PATTERN.search(line)
                 if match:
                     current_job["status"] = "downloading"
                     current_job["progress"] = min(99, max(0, float(match.group(1))))
-                    current_job["stage"] = None
+                    current_job["stage"] = "downloading"
                     current_job["updated_at"] = time.time()
                     if not first_progress_logged[0]:
                         first_progress_logged[0] = True
@@ -721,14 +726,7 @@ def _run_download(job_id: str) -> None:
                             time.monotonic() - started_at,
                         )
                 elif not current_job.get("progress"):
-                    lowered_line = line.lower()
-                    if any(term in lowered_line for term in (
-                        "extracting url", "downloading webpage", "client config",
-                        "player api", "solving", "js challenge", "nsig",
-                    )):
-                        current_job["stage"] = "Contacting YouTube"
-                    elif "downloading subtitles" in lowered_line:
-                        current_job["stage"] = "Fetching subtitles"
+                    current_job["stage"] = "resolving"
                 speed_match = SPEED_PATTERN.search(line)
                 eta_match = ETA_PATTERN.search(line)
                 if speed_match:
@@ -753,10 +751,15 @@ def _run_download(job_id: str) -> None:
             current_job["process"] = None
             if current_job["cancel_requested"]:
                 current_job["status"] = "cancelled"
+                current_job["stage"] = "cancelled"
                 current_job["worker_active"] = False
                 current_job["updated_at"] = time.time()
                 _remove_work_directory(current_job)
                 return
+            # The media transfer is done; everything from here on (subtitle
+            # pass, container checks, audio conversion) is post-processing.
+            current_job["stage"] = "processing"
+            current_job["updated_at"] = time.time()
 
         download_error = None
         if return_code != 0:
@@ -826,6 +829,7 @@ def _run_download(job_id: str) -> None:
                 return
             if current_job["cancel_requested"]:
                 current_job["status"] = "cancelled"
+                current_job["stage"] = "cancelled"
                 current_job["worker_active"] = False
                 current_job["updated_at"] = time.time()
                 _remove_work_directory(current_job)
@@ -858,12 +862,14 @@ def _run_download(job_id: str) -> None:
                 return
             if current_job["cancel_requested"]:
                 current_job["status"] = "cancelled"
+                current_job["stage"] = "cancelled"
                 current_job["worker_active"] = False
                 current_job["updated_at"] = time.time()
                 _remove_work_directory(current_job)
                 return
             current_job.update({
                 "status": "ready",
+                "stage": "completed",
                 "worker_active": False,
                 "progress": 100,
                 "filename": _safe_filename(output_file),
@@ -902,6 +908,7 @@ def _fail_job(job_id: str, message: str) -> None:
         job["process"] = None
         job["worker_active"] = False
         job["status"] = "failed"
+        job["stage"] = "failed"
         job["error"] = message
         job["updated_at"] = time.time()
         _remove_work_directory(job)
@@ -1210,7 +1217,7 @@ class PuffinHandler(BaseHTTPRequestHandler):
                 "video_height": video_height,
                 "preferred_subtitle_language": preferred_subtitle_language,
                 "status": "queued",
-                "stage": None,
+                "stage": "preparing",
                 "progress": 0,
                 "speed": None,
                 "eta": None,
@@ -1287,6 +1294,7 @@ class PuffinHandler(BaseHTTPRequestHandler):
                 pass
             else:
                 job["status"] = "cancelled"
+                job["stage"] = "cancelled"
                 job["updated_at"] = time.time()
                 _remove_work_directory(job)
 
@@ -1323,7 +1331,7 @@ def main() -> None:
     if runtimes and all(name == "quickjs" for name, _ in runtimes):
         LOGGER.warning(
             "Only QuickJS is available for YouTube's JavaScript challenge. QuickJS has no JIT and makes "
-            "downloads start very slowly on a Pi; install Node.js 20 or newer and restart the service."
+            "downloads start very slowly on a Pi; install Node.js 22 or newer and restart the service."
         )
 
     server = ThreadingHTTPServer((HOST, PORT), PuffinHandler)

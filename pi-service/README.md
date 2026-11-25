@@ -26,12 +26,15 @@ export PATH="$HOME/.deno/bin:$PATH"
 deno --version
 ```
 
-On 32-bit Raspberry Pi OS, use Node.js 20 or newer instead. Node's V8 engine runs YouTube's JavaScript challenge far faster than QuickJS, which has no JIT and can spend a minute or more on a Pi before a download starts. Raspberry Pi OS's `nodejs` package may be older than 20, so install an official 32-bit ARM build:
+On 32-bit Raspberry Pi OS, use Node.js 22 or newer instead. yt-dlp requires Node 22.0.0+ to solve YouTube's JavaScript challenge, and Node's V8 engine does that far faster than QuickJS, which has no JIT and can spend a minute or more on a Pi before a download starts. Raspberry Pi OS's `nodejs` package is usually older, so install the official 32-bit ARM build and verify its checksum:
 
 ```sh
 cd /tmp
-archive=$(curl -fsSL https://nodejs.org/dist/latest-v20.x/ | grep -o 'node-v[0-9.]*-linux-armv7l.tar.xz' | head -1)
-curl -fsSLO "https://nodejs.org/dist/latest-v20.x/$archive"
+base=https://nodejs.org/dist/latest-v22.x
+archive=$(curl -fsSL "$base/SHASUMS256.txt" | grep -o 'node-v[0-9.]*-linux-armv7l.tar.xz' | head -1)
+test -n "$archive" || { echo "No 32-bit ARM build at $base"; exit 1; }
+curl -fsSLO "$base/$archive"
+curl -fsSL "$base/SHASUMS256.txt" | grep " $archive" | sha256sum -c -
 mkdir -p "$HOME/node"
 tar -xJf "$archive" -C "$HOME/node" --strip-components=1
 "$HOME/node/bin/node" --version
@@ -79,7 +82,7 @@ The line above includes Node.js and QuickJS locations (`/usr/bin`, `/usr/local/b
 
 ### If downloads take a long time to start
 
-Before media bytes arrive, yt-dlp extracts video information and solves YouTube's JavaScript challenge. QuickJS interprets that JavaScript without a JIT, which can take a minute or more on a 32-bit Pi. Install Node.js 20+ as described above; the service prefers it over QuickJS automatically and reports the runtime it found at startup and in `/api/health`. Subtitles are fetched in a separate pass after the media download (reusing yt-dlp's saved info JSON), so subtitle requests no longer delay the start of the media transfer.
+Before media bytes arrive, yt-dlp extracts video information and solves YouTube's JavaScript challenge. QuickJS interprets that JavaScript without a JIT, which can take a minute or more on a 32-bit Pi. Install Node.js 22+ as described above; the service prefers it over QuickJS automatically and reports the runtime it found at startup and in `/api/health`. Subtitles are fetched in a separate pass after the media download (reusing yt-dlp's saved info JSON), so subtitle requests no longer delay the start of the media transfer.
 
 ### If YouTube reports a JavaScript challenge failure
 

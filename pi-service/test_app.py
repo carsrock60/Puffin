@@ -203,12 +203,14 @@ class SubtitleSelectionTests(unittest.TestCase):
         self.assertIn("fr-CA", " ".join(command))
         self.assertNotIn("--format", command)
 
-    def test_public_job_reports_the_extraction_stage(self):
-        public_job = app._public_job({
-            "id": "test-job", "status": "downloading", "progress": 0, "kind": "audio", "stage": "Contacting YouTube",
-        })
+    def test_public_job_reports_each_named_stage(self):
+        for stage in ("preparing", "resolving", "downloading", "processing", "completed", "failed", "cancelled"):
+            with self.subTest(stage=stage):
+                public_job = app._public_job({
+                    "id": "test-job", "status": "downloading", "progress": 0, "kind": "audio", "stage": stage,
+                })
 
-        self.assertEqual(public_job["stage"], "Contacting YouTube")
+                self.assertEqual(public_job["stage"], stage)
 
     def test_invalid_preferred_language_falls_back_to_english(self):
         self.assertEqual(app._normalize_subtitle_language("fr-CA"), "fr-CA")
@@ -221,6 +223,103 @@ class SubtitleSelectionTests(unittest.TestCase):
 
     def test_invalid_subtitle_language_filter_uses_english(self):
         self.assertEqual(app._subtitle_language_filter("../tmp"), "en,en.*,-live_chat")
+
+
+class DownloadStageTests(unittest.TestCase):
+    def test_a_failed_job_reports_the_failed_stage(self):
+        with tempfile.TemporaryDirectory() as directory:
+            job_id = "stage-failure"
+            app.JOBS[job_id] = {
+                "id": job_id,
+                "status": "processing",
+                "stage": "processing",
+                "work_dir": directory,
+                "process": None,
+            }
+            try:
+                app._fail_job(job_id, "The Pi ran out of space.")
+                job = app.JOBS[job_id]
+                self.assertEqual(job["status"], "failed")
+                self.assertEqual(job["stage"], "failed")
+                self.assertEqual(job["error"], "The Pi ran out of space.")
+            finally:
+                app.JOBS.pop(job_id, None)
+
+    def test_a_finished_download_reports_the_completed_stage(self):
+        script = "\n".join([
+            "echo '[youtube] Extracting URL: https://example.invalid/watch?v=test'",
+            "echo '[download]  10.0% of 1MiB at 1MiB/s ETA 00:01'",
+            "echo '[download] 100% of 1MiB'",
+            "dd if=/dev/zero of=\"$WORK_DIR/Test Song [test].m4a\" bs=1024 count=4 status=none",
+        ])
+        with tempfile.TemporaryDirectory() as directory:
+            job_id = "stage-success"
+            app.JOBS[job_id] = {
+                "id": job_id,
+                "url": "https://example.invalid/watch?v=test",
+                "kind": "audio",
+                "supported_audio_formats": ["m4a"],
+                "status": "queued",
+                "stage": "preparing",
+                "progress": 0,
+                "error": None,
+                "filename": None,
+                "file_path": None,
+                "size": None,
+                "mime_type": None,
+                "work_dir": directory,
+                "created_at": 0,
+                "updated_at": 0,
+                "ready_at": None,
+                "process": None,
+                "cancel_requested": False,
+                "worker_active": True,
+                "transfers": 0,
+            }
+            command = ["bash", "-c", f"export WORK_DIR={directory}; {script}"]
+            try:
+                with patch.object(app, "_yt_dlp_command", return_value=command), \
+                     patch.object(app, "_yt_dlp_environment", return_value=None), \
+                     patch.object(app, "YTDLP_STALL_SECONDS", 20):
+                    app._run_download(job_id)
+                job = app.JOBS[job_id]
+                self.assertEqual(job["status"], "ready")
+                self.assertEqual(job["stage"], "completed")
+            finally:
+                app.JOBS.pop(job_id, None)
+
+    def test_a_cancelled_job_reports_the_cancelled_stage(self):
+        with tempfile.TemporaryDirectory() as directory:
+            job_id = "stage-cancel"
+            app.JOBS[job_id] = {
+                "id": job_id,
+                "url": "https://example.invalid/watch?v=test",
+                "kind": "audio",
+                "supported_audio_formats": ["m4a"],
+                "status": "queued",
+                "stage": "preparing",
+                "progress": 0,
+                "error": None,
+                "filename": None,
+                "file_path": None,
+                "size": None,
+                "mime_type": None,
+                "work_dir": directory,
+                "created_at": 0,
+                "updated_at": 0,
+                "ready_at": None,
+                "process": None,
+                "cancel_requested": True,
+                "worker_active": True,
+                "transfers": 0,
+            }
+            try:
+                app._run_download(job_id)
+                job = app.JOBS[job_id]
+                self.assertEqual(job["status"], "cancelled")
+                self.assertEqual(job["stage"], "cancelled")
+            finally:
+                app.JOBS.pop(job_id, None)
 
 
 if __name__ == "__main__":

@@ -28,9 +28,11 @@ export function initializeSettings() {
   const showPicks = document.querySelector("#settings-show-picks");
   const musicAtlasForm = document.querySelector("#settings-musicatlas-form");
   const musicAtlasKey = document.querySelector("#settings-musicatlas-key");
+  const musicAtlasRemove = document.querySelector("#settings-musicatlas-remove");
   const homeStatus = document.querySelector("#settings-home-status");
   const acoustidForm = document.querySelector("#settings-acoustid-form");
   const acoustidKey = document.querySelector("#settings-acoustid-key");
+  const acoustidRemove = document.querySelector("#settings-acoustid-remove");
   const acoustidStatus = document.querySelector("#settings-acoustid-status");
   const clearHistoryButton = document.querySelector("#settings-clear-history");
   const piOptions = document.querySelector("#settings-pi-options");
@@ -147,6 +149,16 @@ export function initializeSettings() {
     } catch (error) {
       acoustidStatus.textContent = error.message;
     }
+  });
+  musicAtlasRemove.addEventListener("click", () => {
+    musicAtlasKey.value = "";
+    persistHomeVisibility();
+    homeStatus.textContent = "MusicAtlas key removed from this browser.";
+  });
+  acoustidRemove.addEventListener("click", () => {
+    acoustidKey.value = "";
+    persistHomeVisibility();
+    acoustidStatus.textContent = "AcoustID key removed from this browser.";
   });
   function persistDownloadPreferences() {
     try {

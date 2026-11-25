@@ -882,6 +882,12 @@ body.dark .player-bar { background: rgba(30, 36, 40, 0.84); box-shadow: 0 -10px 
 .settings-storage-form > .primary-button { justify-self: start; }
 .settings-storage-form > .muted { margin: 0; font-size: 0.85rem; line-height: 1.5; }
 .settings-storage-form [role="status"] { min-height: 1.3em; }
+.settings-storage-form .settings-actions { margin-top: 0; }
+.settings-dataflow { display: grid; max-width: 720px; gap: 10px; margin: 14px 0 26px; padding: 0; list-style: none; }
+.settings-dataflow li { display: grid; gap: 4px; padding: 13px 15px; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; }
+.settings-dataflow strong { font-size: .9rem; }
+.settings-dataflow span, .settings-dataflow-copy { color: var(--muted); font-size: .85rem; line-height: 1.55; }
+.settings-dataflow-copy { max-width: 720px; margin: 0 0 24px; }
 .settings-home-options { display: grid; gap: 10px; margin-top: 24px; }
 .settings-toggle-row { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 15px 16px; border: 1px solid var(--border); border-radius: 15px; background: var(--surface); cursor: pointer; }
 .settings-toggle-row span { display: grid; gap: 4px; }

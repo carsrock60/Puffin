@@ -1,4 +1,5 @@
 import { assertMediaStorageCapacity, getMediaStorageCapacity, recordPuffinActivity, saveMediaFile } from "./library.js";
+import { describeDownloadStage } from "./download-stage.js";
 import { formatBytes, guardReadyPiDownload, MediaCapacityError } from "./media-capacity.js";
 import { piSupportsVideoQuality, videoHeightForSliderValue, videoQualityLabel } from "./video-quality.js";
 
@@ -497,25 +498,9 @@ export function initializeDownloader() {
       let currentJob = job;
       while (["queued", "downloading", "converting"].includes(currentJob.status)) {
         progress.value = currentJob.progress || 0;
-        if (currentJob.status === "queued") {
-          setStatus(status, "Pi download queued…");
-          progressDetails.textContent = "Waiting for the Pi to start the download…";
-        }
-        else if (currentJob.status === "converting") {
-          setStatus(status, "Combining video and audio on the Pi…");
-          progressDetails.textContent = "Combining video and audio on the Pi…";
-        }
-        else if (currentJob.progress) {
-          setStatus(status, `Downloading on the Pi · ${Math.round(currentJob.progress)}%`);
-          const details = [currentJob.speed, currentJob.eta ? `${currentJob.eta} remaining` : ""].filter(Boolean);
-          progressDetails.textContent = details.length ? details.join(" · ") : "Calculating transfer speed and remaining time…";
-        }
-        else {
-          setStatus(status, "Downloading on the Pi…");
-          progressDetails.textContent = currentJob.stage
-            ? `${currentJob.stage}…`
-            : "Waiting for the Pi to receive data from YouTube…";
-        }
+        const { label, detail } = describeDownloadStage(currentJob);
+        setStatus(status, label);
+        progressDetails.textContent = detail;
 
         await sleep(1200);
         currentJob = await requestJson(baseUrl, `/api/downloads/${jobId}`);

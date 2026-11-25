@@ -57,31 +57,34 @@ export async function fingerprintAudioBlob(blob) {
   }
 }
 
-export function lookupAcoustID({ client, duration, fingerprint }) {
-  return new Promise((resolve, reject) => {
-    const callbackName = `puffinAcoustid_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-    const script = document.createElement("script");
-    const timeout = window.setTimeout(() => finish(new Error("AcoustID lookup timed out.")), 20000);
-    const finish = (error, data) => {
-      window.clearTimeout(timeout);
-      script.remove();
-      delete window[callbackName];
-      if (error) reject(error);
-      else if (data?.status !== "ok") reject(new Error(data?.error?.message || "AcoustID lookup failed."));
-      else resolve(data.results || []);
-    };
+const ACOUSTID_LOOKUP_URL = "https://api.acoustid.org/v2/lookup";
 
-    window[callbackName] = (data) => finish(null, data);
-    script.onerror = () => finish(new Error("Could not reach AcoustID."));
-    const params = new URLSearchParams({
-      client,
-      duration: String(Math.max(1, Math.round(duration))),
-      fingerprint,
-      meta: "recordings+releasegroups+compress",
-      format: "jsonp",
-      jsoncallback: callbackName,
-    });
-    script.src = `https://api.acoustid.org/v2/lookup?${params}`;
-    document.head.append(script);
+/**
+ * AcoustID takes the application key as a request parameter. Sending it in a
+ * POST body instead of a JSONP URL keeps it out of browser URLs, proxy logs,
+ * and monitoring traces, which is why this no longer injects a script tag.
+ */
+export async function lookupAcoustID({ client, duration, fingerprint }) {
+  const body = new URLSearchParams({
+    client,
+    duration: String(Math.max(1, Math.round(duration))),
+    fingerprint,
+    meta: "recordings+releasegroups+compress",
+    format: "json",
   });
+  let response;
+  try {
+    response = await fetch(ACOUSTID_LOOKUP_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body,
+      signal: AbortSignal.timeout(20000),
+    });
+  } catch (error) {
+    throw new Error(error?.name === "TimeoutError" ? "AcoustID lookup timed out." : "Could not reach AcoustID.");
+  }
+  if (!response.ok) throw new Error(`AcoustID lookup failed (${response.status}).`);
+  const data = await response.json().catch(() => null);
+  if (data?.status !== "ok") throw new Error(data?.error?.message || "AcoustID lookup failed.");
+  return data.results || [];
 }
