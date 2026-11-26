@@ -14,6 +14,7 @@
     <link rel="apple-touch-icon" sizes="180x180" href="/icons/puffin-app-180.png" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <title>Puffin — A Music Player</title>
+    <script src="/appearance.js"></script>
     <link rel="stylesheet" href="/src/styles.css" />
     <script type="module" src="/src/main.js"></script>
   </head>
@@ -21,7 +22,7 @@
     <div class="app">
       <aside class="sidebar" id="app-sidebar" aria-label="Main navigation">
         <div class="sidebar-brand-row">
-          <div class="brand" aria-label="Puffin"><span class="brand-mark" aria-hidden="true">P</span><span class="brand-name">Puffin</span></div>
+          <div class="brand" aria-label="Puffin"><img class="brand-mark" src="/Puffin_Favicon.svg" alt="" /><span class="brand-name">Puffin</span></div>
           <button id="sidebar-collapse" class="sidebar-collapse" type="button" aria-label="Collapse sidebar" aria-controls="app-sidebar" aria-expanded="true" title="Collapse sidebar"><span aria-hidden="true">‹</span></button>
         </div>
         <nav class="nav-list" aria-label="Sections">
@@ -323,6 +324,7 @@
       <section id="media-player" class="player-bar" aria-label="Now playing">
       <div class="player-track">
         <img id="player-artwork" class="player-artwork" src="/favicon.svg" alt="" />
+        <div id="player-visualizer" class="player-visualizer" aria-hidden="true"></div>
         <video id="video-player" class="player-video" playsinline webkit-playsinline preload="metadata" hidden tabindex="0" aria-label="Expand video" title="Expand video"></video>
         <div id="player-video-fallback" class="player-video-fallback" hidden aria-hidden="true"><span>▶</span></div>
         <div class="player-track-copy">
@@ -345,7 +347,6 @@
         <button id="player-expand-video" class="player-expand-video" type="button" aria-label="Expand video player" title="Expand video" hidden>⤢</button>
         <button id="player-shuffle" class="player-mode-action" type="button" aria-label="Shuffle" aria-pressed="false" title="Shuffle">⤨</button>
         <button id="player-repeat" class="player-mode-action" type="button" aria-label="Repeat all" aria-pressed="true" title="Repeat all">↻</button>
-        <button id="player-visualizer" class="player-mode-action" type="button" aria-label="Open visualizer" title="Visualizer">▥</button>
         <button id="player-queue" class="player-mode-action" type="button" aria-label="Open queue" title="Queue">☷</button>
         <button id="player-equalizer-open" class="player-equalizer-button" type="button" aria-label="Open equalizer" title="Equalizer">EQ</button>
         <select id="player-speed" class="player-speed" aria-label="Playback speed" title="Playback speed">
@@ -384,13 +385,10 @@
         <div class="full-player-controls">
           <button id="full-player-shuffle" type="button" aria-pressed="false">Shuffle</button>
           <button id="full-player-repeat" type="button" aria-pressed="true">Repeat all</button>
-          <button id="full-player-visualizer-button" type="button" aria-pressed="false">Visualizer</button>
           <button id="full-player-queue-button" data-pane="queue" type="button" aria-pressed="false">Queue</button>
           <button id="full-player-eq-button" data-pane="equalizer" type="button" aria-pressed="false">EQ</button>
         </div>
         <div class="full-player-transport"><span id="full-player-time">0:00</span><input id="full-player-seek" type="range" min="0" max="0" value="0" step="0.1" aria-label="Playback position"/><span id="full-player-duration">0:00</span><button id="full-player-toggle" type="button" aria-label="Play">▶</button></div>
-        <div id="full-player-visualizer" class="compact-visualizer" role="img" aria-label="Audio visualizer" hidden></div>
-        <p id="full-player-visualizer-status" class="full-player-visualizer-status" role="status" aria-live="polite" hidden></p>
       </div>
     </section>
 
@@ -570,7 +568,43 @@
             </section>
             <section data-settings-panel="appearance" hidden>
               <h2>Appearance</h2>
-              <p class="muted">Theme choices and appearance preferences are coming soon.</p>
+              <p class="muted appearance-intro">Make Puffin feel at home on this device.</p>
+              <div class="appearance-settings">
+                <fieldset class="appearance-row">
+                  <legend>Theme</legend>
+                  <p>Choose a look or follow your device.</p>
+                  <div class="appearance-segments">
+                    <label><input data-appearance-option type="radio" name="theme" value="light" /><span>Light</span></label>
+                    <label><input data-appearance-option type="radio" name="theme" value="dark" /><span>Dark</span></label>
+                    <label><input data-appearance-option type="radio" name="theme" value="system" /><span>System</span></label>
+                  </div>
+                </fieldset>
+                <fieldset class="appearance-row">
+                  <legend>Accent color</legend>
+                  <p>Used for controls and highlights.</p>
+                  <div class="appearance-swatches">
+                    <label><input data-appearance-option type="radio" name="accent" value="blue" /><span class="appearance-swatch" data-color="blue"></span><span>Puffin Blue</span></label>
+                    <label><input data-appearance-option type="radio" name="accent" value="violet" /><span class="appearance-swatch" data-color="violet"></span><span>Violet</span></label>
+                    <label><input data-appearance-option type="radio" name="accent" value="emerald" /><span class="appearance-swatch" data-color="emerald"></span><span>Emerald</span></label>
+                    <label><input data-appearance-option type="radio" name="accent" value="rose" /><span class="appearance-swatch" data-color="rose"></span><span>Rose</span></label>
+                    <label><input data-appearance-option type="radio" name="accent" value="amber" /><span class="appearance-swatch" data-color="amber"></span><span>Amber</span></label>
+                  </div>
+                </fieldset>
+                <fieldset class="appearance-row">
+                  <legend>Interface density</legend>
+                  <p>Adjust spacing throughout Puffin.</p>
+                  <div class="appearance-segments">
+                    <label><input data-appearance-option type="radio" name="density" value="comfortable" /><span>Comfortable</span></label>
+                    <label><input data-appearance-option type="radio" name="density" value="compact" /><span>Compact</span></label>
+                  </div>
+                </fieldset>
+                <label class="appearance-motion appearance-row" for="appearance-reduce-motion">
+                  <span><strong>Reduce motion</strong><small id="appearance-motion-hint">Reduce nonessential animation.</small></span>
+                  <input id="appearance-reduce-motion" type="checkbox" />
+                </label>
+              </div>
+              <button id="appearance-reset" class="secondary-button" type="button">Reset appearance</button>
+              <p id="appearance-status" class="muted" role="status" aria-live="polite"></p>
             </section>
             <section data-settings-panel="playback" hidden>
               <h2>Playback</h2>
@@ -638,7 +672,7 @@
             <section data-settings-panel="about" hidden>
               <h2>About Puffin</h2>
               <div class="about-puffin-card">
-                <img src="/favicon.svg" alt="" width="56" height="56" />
+                <img src="/Puffin_Favicon.svg" alt="" width="56" height="56" />
                 <div>
                   <h3>Puffin</h3>
                   <p>A personal music and video library for the devices you use every day.</p>

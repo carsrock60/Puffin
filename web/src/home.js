@@ -1,5 +1,7 @@
 import { getMediaDisplayTitle, listMediaFiles, listRecentlyPlayed, listPlaylists } from "./library.js";
 import { getHomePreferences } from "./home-preferences.js";
+import { inView } from "motion";
+import { animateElement, MOTION_EASE, prefersReducedMotion } from "./motion.js";
 
 const normalize = (value) => String(value || "").trim().toLocaleLowerCase().replace(/\s+/g, " ");
 const recommendationCache = new Map();
@@ -290,6 +292,42 @@ export function initializeHome({ onPlay, onPlayPlaylist }) {
     }
   }
 
+  const revealedSections = new WeakSet();
+  function setupHomeSectionReveals() {
+    const sections = [...document.querySelectorAll("#home-panel .home-section")];
+    sections.forEach((section, index) => {
+      if (revealedSections.has(section)) return;
+      if (prefersReducedMotion()) {
+        revealedSections.add(section);
+        return;
+      }
+      section.classList.add("is-reveal-pending");
+      let stop = null;
+      stop = inView(section, () => {
+        stop?.();
+        revealedSections.add(section);
+        if (prefersReducedMotion()) {
+          section.classList.remove("is-reveal-pending");
+          return;
+        }
+        const controls = animateElement(section, { opacity: [0, 1], y: [10, 0] }, {
+          duration: 0.46,
+          delay: Math.min(index * 0.05, 0.15),
+          ease: MOTION_EASE,
+        });
+        if (!controls) {
+          section.classList.remove("is-reveal-pending");
+          return;
+        }
+        controls.finished.then(() => {
+          section.classList.remove("is-reveal-pending");
+          section.style.opacity = "";
+          section.style.transform = "";
+        }).catch(() => { /* A later render replaced the section. */ });
+      }, { amount: 0.12 });
+    });
+  }
+
   previous.addEventListener("click", () => recentList.scrollBy({ left: -recentList.clientWidth * 0.8, behavior: "smooth" }));
   next.addEventListener("click", () => recentList.scrollBy({ left: recentList.clientWidth * 0.8, behavior: "smooth" }));
   recentList.addEventListener("scroll", updateScrollButtons, { passive: true });
@@ -314,4 +352,5 @@ export function initializeHome({ onPlay, onPlayPlaylist }) {
   window.addEventListener("puffin:home-preferences-updated", (event) => applyPreferences(event.detail));
   refreshRecentlyPlayed();
   applyPreferences();
+  setupHomeSectionReveals();
 }

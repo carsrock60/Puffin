@@ -11,6 +11,7 @@ import { initializeListen } from "./listen.js";
 import { initializeEnrichment } from "./enrichment.js";
 import { renderSyncedLyrics, syncSyncedLyrics } from "./lyrics.js";
 import { createSubtitleController, parseWebVtt } from "./video-subtitles.js";
+import { animateElement, MOTION_EASE, MOTION_SPRING, prefersReducedMotion, translateYOf } from "./motion.js";
 
 const artworkCacheTasks = new Map();
 function queueArtworkCache(record) {
@@ -52,7 +53,6 @@ const fullPlayerLyricsEmpty = document.querySelector("#full-player-lyrics-empty"
 const fullPlayerLyricsLines = document.querySelector("#full-player-lyrics-lines");
 const fullPlayerLyricsCredit = document.querySelector("#full-player-lyrics-credit");
 const fullPlayerQueue = document.querySelector("#full-player-queue");
-const fullPlayerVisualizer = document.querySelector("#full-player-visualizer");
 const fullPlayerEqualizer = document.querySelector("#full-player-equalizer");
 const fullPlayerQueueList = document.querySelector("#full-player-queue-list");
 const fullPlayerSeek = document.querySelector("#full-player-seek");
@@ -77,32 +77,34 @@ function savePlayerState(force = false) {
     localStorage.setItem(PLAYER_STATE_KEY, JSON.stringify({
       queue: queueRecords.map((record) => record.id), mediaId: activeMediaId,
       time: activePlayer?.currentTime || 0, shuffle: shuffleEnabled,
-      repeat: repeatMode, visualizer: visualizerEnabled,
+      repeat: repeatMode,
     }));
   } catch { /* Storage may be unavailable or full. */ }
 }
 let playerPane = "lyrics";
 let playerModeCloseTimer;
 let playerModeReturnFocus = null;
-let visualizerEnabled = false;
 let visualizerAnalyser = null;
 let visualizerData = null;
 let visualizerFrame = 0;
-let visualizerBeatPulse = 0;
-let visualizerPreviousBass = 0;
-let visualizerLastBeatAt = 0;
-let visualizerLastFrameAt = 0;
+let visualizerSetupPromise = null;
 let lyricsSyncFrame = 0;
 let equalizerController = null;
 let dragQueueId = null;
 let queueHoldTimer;
-const visualizerBars = Array.from({ length: 24 }, () => {
+let queueDragRow = null;
+let queueDragPointerY = 0;
+let queueDragGrabOffset = 0;
+const queueRowAnimations = new WeakMap();
+const visualizerBars = Array.from({ length: 9 }, () => {
   const bar = document.createElement("span");
   bar.setAttribute("aria-hidden", "true");
   return bar;
 });
-const visualizerLevels = Array(visualizerBars.length).fill(0.08);
-fullPlayerVisualizer.replaceChildren(...visualizerBars);
+const visualizerIdleLevels = [0.14, 0.2, 0.3, 0.18, 0.38, 0.18, 0.3, 0.2, 0.14];
+const visualizerLevels = [...visualizerIdleLevels];
+playerVisualizer.replaceChildren(...visualizerBars);
+visualizerBars.forEach((bar, index) => bar.style.setProperty("--level", visualizerLevels[index]));
 
 function closeMobileSidebar({ restoreFocus = false } = {}) {
   appShell.classList.remove("is-sidebar-open");
@@ -142,9 +144,56 @@ tabButtons.forEach((button) => {
     if (button.dataset.libraryView) {
       window.dispatchEvent(new CustomEvent("puffin:library-view", { detail: button.dataset.libraryView }));
     }
+    updateNavIndicator();
     if (window.matchMedia("(max-width: 720px)").matches) closeMobileSidebar({ restoreFocus: true });
   });
 });
+
+const navList = document.querySelector(".nav-list");
+const navIndicator = document.createElement("span");
+navIndicator.className = "nav-active-indicator";
+navIndicator.setAttribute("aria-hidden", "true");
+navList.append(navIndicator);
+let navIndicatorTarget = null;
+
+function updateNavIndicator({ animate = true } = {}) {
+  const active = navList.querySelector('.nav-button[aria-current="page"]');
+  const navBox = navList.getBoundingClientRect();
+  if (!active || !navBox.width) {
+    navIndicator.classList.remove("is-visible");
+    return;
+  }
+  const box = active.getBoundingClientRect();
+  const height = Math.max(12, Math.min(18, box.height - 20));
+  const x = box.left - navBox.left + 4;
+  const y = box.top - navBox.top + (box.height - height) / 2;
+  const target = `${x.toFixed(1)}:${y.toFixed(1)}:${height}`;
+  navIndicator.style.height = `${height}px`;
+  navIndicator.classList.add("is-visible");
+  if (navIndicatorTarget === target) return;
+  navIndicatorTarget = target;
+  if (!animate || prefersReducedMotion()) {
+    navIndicator.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+    return;
+  }
+  const current = getComputedStyle(navIndicator).transform;
+  let currentX = x;
+  let currentY = y;
+  if (current && current !== "none") {
+    try {
+      const matrix = new DOMMatrixReadOnly(current);
+      currentX = matrix.m41;
+      currentY = matrix.m42;
+    } catch { /* Fall back to the target position. */ }
+  }
+  animateElement(navIndicator, { x: [currentX, x], y: [currentY, y] }, MOTION_SPRING);
+}
+
+const navIndicatorResize = new ResizeObserver(() => updateNavIndicator({ animate: false }));
+navIndicatorResize.observe(navList);
+window.addEventListener("puffin:library-view", () => requestAnimationFrame(() => updateNavIndicator({ animate: false })));
+requestAnimationFrame(() => updateNavIndicator({ animate: false }));
+document.fonts?.ready.then(() => updateNavIndicator({ animate: false }));
 
 sidebarCollapse.addEventListener("click", () => {
   syncSidebarCollapse(!appShell.classList.contains("is-sidebar-collapsed"));
@@ -172,12 +221,6 @@ window.addEventListener("keydown", (event) => {
 });
 window.addEventListener("resize", () => {
   if (!window.matchMedia("(max-width: 720px)").matches) closeMobileSidebar();
-});
-
-const themeToggle = document.querySelector("#theme-toggle");
-themeToggle.addEventListener("click", () => {
-  const isDark = document.body.classList.toggle("dark");
-  themeToggle.setAttribute("aria-pressed", String(isDark));
 });
 
 const libraryStatus = document.querySelector("#library-status");
@@ -347,32 +390,16 @@ function stopVisualizerLoop() {
 }
 
 function startVisualizerLoop() {
-  if (visualizerFrame || !visualizerEnabled || !visualizerAnalyser || playerPane !== "lyrics"
-    || playerFullscreen.hidden || activePlayer !== audioPlayer || audioPlayer.paused || audioPlayer.ended) return;
+  if (visualizerFrame || !visualizerAnalyser || document.hidden || activePlayer !== audioPlayer
+    || audioPlayer.paused || audioPlayer.ended || document.documentElement.dataset.reduceMotion === "true") return;
   const draw = () => {
     visualizerFrame = 0;
-    if (!visualizerEnabled || !visualizerAnalyser || playerPane !== "lyrics"
-      || playerFullscreen.hidden || activePlayer !== audioPlayer || audioPlayer.paused || audioPlayer.ended) return;
+    if (!visualizerAnalyser || document.hidden || activePlayer !== audioPlayer
+      || audioPlayer.paused || audioPlayer.ended || document.documentElement.dataset.reduceMotion === "true") return;
     visualizerAnalyser.getByteFrequencyData(visualizerData);
     const binWidth = visualizerAnalyser.context.sampleRate / visualizerAnalyser.fftSize;
-    const now = performance.now();
-    const delta = visualizerLastFrameAt ? Math.min(50, now - visualizerLastFrameAt) : 16;
-    visualizerLastFrameAt = now;
-    visualizerBeatPulse *= Math.exp(-delta / 190);
-    const bassFirstBin = Math.max(1, Math.floor(45 / binWidth));
-    const bassLastBin = Math.min(visualizerData.length, Math.ceil(180 / binWidth));
-    let bassEnergy = 0;
-    for (let bin = bassFirstBin; bin < bassLastBin; bin += 1) bassEnergy += visualizerData[bin];
-    bassEnergy /= Math.max(1, bassLastBin - bassFirstBin) * 255;
-    const bassRise = bassEnergy - visualizerPreviousBass;
-    if (bassEnergy > 0.13 && bassRise > 0.025 && now - visualizerLastBeatAt > 170) {
-      visualizerBeatPulse = 1;
-      visualizerLastBeatAt = now;
-    }
-    visualizerPreviousBass += (bassEnergy - visualizerPreviousBass) * 0.45;
-
-    const lowestFrequency = 32;
-    const highestFrequency = Math.min(12000, visualizerAnalyser.context.sampleRate / 2);
+    const lowestFrequency = 50;
+    const highestFrequency = Math.min(10000, visualizerAnalyser.context.sampleRate / 2);
     visualizerBars.forEach((bar, index) => {
       const startFrequency = lowestFrequency * (highestFrequency / lowestFrequency) ** (index / visualizerBars.length);
       const endFrequency = lowestFrequency * (highestFrequency / lowestFrequency) ** ((index + 1) / visualizerBars.length);
@@ -381,11 +408,8 @@ function startVisualizerLoop() {
       let energy = 0;
       for (let bin = firstBin; bin < lastBin; bin += 1) energy += visualizerData[bin] ** 2;
       const average = Math.sqrt(energy / Math.max(1, lastBin - firstBin)) / 255;
-      const spectralLevel = Math.min(1.12, Math.max(0, (average - 0.035) / 0.52) ** 0.72 * 1.55);
-      const bassAccent = index < 9 ? visualizerBeatPulse * (0.78 - index * 0.065) : visualizerBeatPulse * 0.08;
-      const target = Math.max(0.08, Math.min(1.25, spectralLevel + bassAccent));
-      const current = visualizerLevels[index];
-      visualizerLevels[index] = current + (target - current) * (target > current ? 0.72 : 0.16);
+      const target = Math.max(0.12, Math.min(1, Math.max(0, (average - 0.025) / 0.48) ** 0.7));
+      visualizerLevels[index] += (target - visualizerLevels[index]) * (target > visualizerLevels[index] ? 0.62 : 0.18);
       bar.style.setProperty("--level", visualizerLevels[index].toFixed(2));
     });
     visualizerFrame = requestAnimationFrame(draw);
@@ -393,49 +417,41 @@ function startVisualizerLoop() {
   visualizerFrame = requestAnimationFrame(draw);
 }
 
-function setVisualizerEnabled(enabled) {
-  visualizerEnabled = enabled;
-  savePlayerState(true);
-  fullPlayerVisualizer.hidden = !enabled;
-  playerVisualizer.setAttribute("aria-pressed", String(enabled));
-  document.querySelector("#full-player-visualizer-button").setAttribute("aria-pressed", String(enabled));
-  if (enabled) startVisualizerLoop();
-  else {
-    stopVisualizerLoop();
-    visualizerBeatPulse = 0;
-    visualizerPreviousBass = 0;
-    visualizerLastFrameAt = 0;
-    visualizerLevels.fill(0.08);
-    visualizerBars.forEach((bar) => bar.style.setProperty("--level", ".08"));
-  }
+function resetVisualizerBars() {
+  stopVisualizerLoop();
+  visualizerIdleLevels.forEach((level, index) => {
+    visualizerLevels[index] = level;
+    visualizerBars[index].style.setProperty("--level", level);
+  });
 }
 
-async function toggleVisualizer() {
-  if (activeMediaRecord?.kind !== "audio") return;
-  if (playerFullscreen.hidden) openPlayerMode("lyrics");
-  else if (playerPane !== "lyrics") setPlayerPane("lyrics");
-  if (visualizerEnabled) {
-    setVisualizerEnabled(false);
-    return;
-  }
-  setVisualizerEnabled(true);
-  const status = document.querySelector("#full-player-visualizer-status");
-  status.hidden = true;
-  try {
-    visualizerAnalyser = await equalizerController.getAnalyser(audioPlayer);
-    if (!visualizerAnalyser) throw new Error("Audio analysis is unavailable in this browser.");
-    visualizerData = new Uint8Array(visualizerAnalyser.frequencyBinCount);
+async function prepareCompactVisualizer() {
+  if (visualizerAnalyser || visualizerSetupPromise || playerVisualizer.dataset.available === "false"
+    || activePlayer !== audioPlayer || !equalizerController) return;
+  visualizerSetupPromise = equalizerController.getAnalyser(audioPlayer)
+    .then((analyser) => {
+      visualizerAnalyser = analyser;
+      visualizerData = new Uint8Array(analyser.frequencyBinCount);
+      if (activePlayer === audioPlayer && !audioPlayer.paused) startVisualizerLoop();
+    })
+    .catch((error) => {
+      playerVisualizer.dataset.available = "false";
+      console.warn("Puffin could not start the compact audio visualizer:", error);
+    })
+    .finally(() => { visualizerSetupPromise = null; });
+  return visualizerSetupPromise;
+}
+
+function syncCompactVisualizer() {
+  const playing = activePlayer === audioPlayer && !audioPlayer.paused && !audioPlayer.ended;
+  playerVisualizer.classList.toggle("is-playing", playing);
+  if (playing) {
+    void prepareCompactVisualizer();
     startVisualizerLoop();
-  } catch (error) {
-    if (!visualizerEnabled) return;
-    setVisualizerEnabled(false);
-    status.textContent = `Visualizer could not start: ${error.message}`;
-    status.hidden = false;
-  }
+  } else resetVisualizerBars();
 }
 
 function setPlayerPane(pane) {
-  if (pane !== "lyrics") setVisualizerEnabled(false);
   playerPane = pane;
   fullPlayerLyrics.hidden = pane !== "lyrics";
   fullPlayerQueue.hidden = pane !== "queue";
@@ -451,18 +467,121 @@ function setPlayerPane(pane) {
   } else stopLyricsSyncLoop();
 }
 
+let artworkFlight = null;
+let artworkFlightToken = 0;
+
+function stopArtworkFlight({ restore = true } = {}) {
+  if (!artworkFlight) return;
+  artworkFlightToken += 1;
+  artworkFlight.controls?.stop();
+  artworkFlight.clone.remove();
+  if (restore) artworkFlight.artwork.style.visibility = "";
+  artworkFlight = null;
+}
+
+function artworkRadius(element, fallback) {
+  const radius = Number.parseFloat(getComputedStyle(element).borderRadius);
+  return Number.isFinite(radius) ? radius : fallback;
+}
+
+function measureFullArtworkRect() {
+  const wasClosing = playerFullscreen.classList.contains("is-closing");
+  const transition = playerFullscreen.style.transition;
+  playerFullscreen.style.transition = "none";
+  playerFullscreen.classList.remove("is-closing");
+  const rect = fullPlayerArtwork.getBoundingClientRect();
+  if (wasClosing) playerFullscreen.classList.add("is-closing");
+  playerFullscreen.style.transition = transition;
+  return rect;
+}
+
+// A single fixed artwork clone carries the cover between the dock and the
+// listening stage, so the transition survives interrupted open/close actions.
+function runArtworkFlight({ from, to, src, fromRadius, toRadius, hide }) {
+  if (!from?.width || !to?.width || !src) return;
+  const token = ++artworkFlightToken;
+  const clone = document.createElement("img");
+  clone.className = "artwork-flight";
+  clone.src = src;
+  clone.alt = "";
+  clone.setAttribute("aria-hidden", "true");
+  Object.assign(clone.style, {
+    left: `${to.left}px`, top: `${to.top}px`, width: `${to.width}px`, height: `${to.height}px`,
+  });
+  document.body.append(clone);
+  const scale = from.width / to.width;
+  const startX = (from.left + from.width / 2) - (to.left + to.width / 2);
+  const startY = (from.top + from.height / 2) - (to.top + to.height / 2);
+  const controls = animateElement(clone, {
+    x: [startX, 0],
+    y: [startY, 0],
+    scale: [scale, 1],
+    borderRadius: [`${fromRadius / scale}px`, `${toRadius}px`],
+  }, { duration: 0.32, ease: MOTION_EASE });
+  if (!controls) {
+    clone.remove();
+    return;
+  }
+  hide.style.visibility = "hidden";
+  artworkFlight = { clone, controls, artwork: hide, token };
+  controls.finished.then(() => {
+    if (token !== artworkFlightToken) return;
+    clone.remove();
+    hide.style.visibility = "";
+    artworkFlight = null;
+  }).catch(() => { /* Stopped by a newer transition. */ });
+}
+
+function morphArtworkToPlayer(sourceRect, targetRect) {
+  stopArtworkFlight();
+  if (!sourceRect?.width || !targetRect?.width || prefersReducedMotion()) return;
+  runArtworkFlight({
+    from: sourceRect,
+    to: targetRect,
+    src: fullPlayerArtwork.src,
+    fromRadius: artworkRadius(playerArtwork, 12),
+    toRadius: artworkRadius(fullPlayerArtwork, 22),
+    hide: fullPlayerArtwork,
+  });
+}
+
+function morphArtworkToDock(sourceRect, targetRect) {
+  if (!sourceRect?.width || !targetRect?.width || prefersReducedMotion()) return;
+  runArtworkFlight({
+    from: sourceRect,
+    to: targetRect,
+    src: fullPlayerArtwork.src,
+    fromRadius: artworkRadius(fullPlayerArtwork, 22),
+    toRadius: artworkRadius(playerArtwork, 12),
+    hide: fullPlayerArtwork,
+  });
+}
+
 function openPlayerMode(pane = "lyrics") {
   if (!activeMediaRecord || activeMediaRecord.kind !== "audio") return;
   window.clearTimeout(playerModeCloseTimer);
-  if (playerFullscreen.hidden) playerModeReturnFocus = document.activeElement;
+  const wasHidden = playerFullscreen.hidden;
+  const wasClosing = !wasHidden && playerFullscreen.classList.contains("is-closing");
+  const interruptedRect = wasClosing && artworkFlight ? artworkFlight.clone.getBoundingClientRect() : null;
+  if (wasHidden) playerModeReturnFocus = document.activeElement;
   playerFullscreen.hidden = false;
   playerFullscreen.inert = false;
   playerFullscreen.setAttribute("aria-hidden", "false");
-  playerFullscreen.classList.add("is-closing");
-  requestAnimationFrame(() => requestAnimationFrame(() => playerFullscreen.classList.remove("is-closing")));
   fullPlayerTitle.textContent = getMediaDisplayTitle(activeMediaRecord);
   fullPlayerArtist.textContent = activeMediaRecord.artist || "Puffin Library";
   fullPlayerArtwork.src = activeMediaRecord.artwork || "/favicon.svg";
+  if (wasClosing) {
+    stopArtworkFlight({ restore: false });
+    fullPlayerArtwork.style.visibility = "";
+  }
+  if (wasHidden || wasClosing) {
+    const targetRect = measureFullArtworkRect();
+    morphArtworkToPlayer(interruptedRect || playerArtwork.getBoundingClientRect(), targetRect);
+  }
+  if (wasHidden || wasClosing) {
+    playerFullscreen.classList.add("is-closing");
+    requestAnimationFrame(() => requestAnimationFrame(() => playerFullscreen.classList.remove("is-closing")));
+  }
   setPlayerPane(pane);
   updateFullPlayerControls();
   setPlayerRevealState(true);
@@ -472,14 +591,20 @@ function openPlayerMode(pane = "lyrics") {
 function closePlayerMode() {
   if (playerFullscreen.hidden) return;
   setPlayerPane("lyrics");
-  setVisualizerEnabled(false);
+  const dockRect = playerDock.hidden ? null : playerArtwork.getBoundingClientRect();
+  const sourceRect = artworkFlight ? artworkFlight.clone.getBoundingClientRect() : fullPlayerArtwork.getBoundingClientRect();
+  stopArtworkFlight();
+  morphArtworkToDock(sourceRect, dockRect);
   playerFullscreen.classList.add("is-closing");
   playerFullscreen.inert = true;
   playerFullscreen.setAttribute("aria-hidden", "true");
   setPlayerRevealState(false);
   window.clearTimeout(playerModeCloseTimer);
   playerModeCloseTimer = window.setTimeout(() => {
+    stopArtworkFlight();
+    fullPlayerArtwork.style.visibility = "";
     playerFullscreen.hidden = true;
+    playerFullscreen.classList.remove("is-closing");
     if (playerModeReturnFocus?.isConnected && !playerModeReturnFocus.closest("[hidden]")) playerModeReturnFocus.focus({ preventScroll: true });
     else if (activePlayer === audioPlayer && !playerDock.hidden) playerReveal.focus({ preventScroll: true });
     playerModeReturnFocus = null;
@@ -508,20 +633,30 @@ function renderPlayerQueue() {
     handle.setAttribute("aria-label", `Reorder ${getMediaDisplayTitle(record)}. Hold and drag, or use the arrow keys.`);
     handle.addEventListener("pointerdown", (event) => {
       event.preventDefault();
+      queueDragPointerY = event.clientY;
       window.clearTimeout(queueHoldTimer);
-      queueHoldTimer = window.setTimeout(() => { dragQueueId = record.id; handle.classList.add("is-dragging"); row.classList.add("is-dragging"); }, 240);
+      queueHoldTimer = window.setTimeout(() => {
+        if (dragQueueId) return;
+        const startY = translateYOf(row);
+        queueDragGrabOffset = queueDragPointerY - row.getBoundingClientRect().top;
+        queueRowAnimations.get(row)?.stop();
+        queueRowAnimations.delete(row);
+        row.getAnimations().forEach((animation) => animation.cancel());
+        row.style.transform = "";
+        row.style.setProperty("--queue-drag-y", `${startY}px`);
+        dragQueueId = record.id;
+        queueDragRow = row;
+        handle.classList.add("is-dragging");
+        row.classList.add("is-dragging");
+      }, 240);
     });
     handle.addEventListener("keydown", (event) => {
       if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
       event.preventDefault();
       const index = queueRecords.findIndex((item) => item.id === record.id);
       const destination = Math.max(0, Math.min(queueRecords.length - 1, index + (event.key === "ArrowUp" ? -1 : 1)));
-      if (destination === index) return;
-      const [item] = queueRecords.splice(index, 1);
-      queueRecords.splice(destination, 0, item);
-      savePlayerState(true);
-      renderPlayerQueue();
-      [...fullPlayerQueueList.querySelectorAll("li[data-queue-id]")]
+      if (!moveQueueRecord(record.id, destination)) return;
+      queueRows()
         .find((queueRow) => queueRow.dataset.queueId === record.id)
         ?.querySelector(".queue-drag-handle")?.focus({ preventScroll: true });
     });
@@ -558,15 +693,45 @@ function renderPlayerQueue() {
   });
 }
 
-function animateQueueRender(previousPositions) {
-  renderPlayerQueue();
-  for (const row of fullPlayerQueueList.querySelectorAll("li[data-queue-id]")) {
-    const before = previousPositions.get(row.dataset.queueId);
-    if (!before || row.dataset.queueId === dragQueueId) continue;
-    const after = row.getBoundingClientRect();
-    const dx = before.left - after.left, dy = before.top - after.top;
-    if (dx || dy) row.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: "translate(0, 0)" }], { duration: 190, easing: "cubic-bezier(.2,.75,.25,1)" });
+function queueRows() {
+  return [...fullPlayerQueueList.querySelectorAll("li[data-queue-id]")];
+}
+
+function animateQueueRow(row, keyframes, options) {
+  queueRowAnimations.get(row)?.stop();
+  const controls = animateElement(row, keyframes, options);
+  if (controls) queueRowAnimations.set(row, controls);
+  else queueRowAnimations.delete(row);
+  return controls;
+}
+
+// Reorder the live queue rows instead of re-rendering them mid-drag. The rows
+// keep their pointer handlers and focus, and neighbours FLIP from their current
+// visual position so rapid, interrupted drags never snap.
+function moveQueueRecord(recordId, insertionIndex) {
+  const from = queueRecords.findIndex((record) => record.id === recordId);
+  if (from < 0) return false;
+  const rows = queueRows();
+  if (rows.length !== queueRecords.length) return false;
+  const destination = Math.max(0, Math.min(queueRecords.length - 1, insertionIndex));
+  if (destination === from) return false;
+  const layout = new Map(rows.map((row) => [row.dataset.queueId, { top: row.offsetTop, y: translateYOf(row) }]));
+  const [record] = queueRecords.splice(from, 1);
+  queueRecords.splice(destination, 0, record);
+  const row = rows.find((candidate) => candidate.dataset.queueId === recordId);
+  const others = rows.filter((candidate) => candidate !== row);
+  fullPlayerQueueList.insertBefore(row, others[destination] || null);
+  savePlayerState(true);
+  for (const candidate of rows) {
+    if (candidate === row) continue;
+    const before = layout.get(candidate.dataset.queueId);
+    if (!before) continue;
+    const delta = before.top - candidate.offsetTop;
+    const start = before.y + delta;
+    if (Math.abs(start) < 0.5) continue;
+    animateQueueRow(candidate, { y: [start, 0] }, MOTION_SPRING);
   }
+  return true;
 }
 
 async function prepareQueue(record) {
@@ -605,23 +770,36 @@ function advanceQueue() {
 }
 
 document.addEventListener("pointermove", (event) => {
+  queueDragPointerY = event.clientY;
   if (!dragQueueId) return;
-  const from = queueRecords.findIndex((record) => record.id === dragQueueId);
-  const target = document.elementFromPoint(event.clientX, event.clientY)?.closest("li[data-queue-id]");
-  const to = target ? queueRecords.findIndex((record) => record.id === target.dataset.queueId) : -1;
-  if (from < 0 || to < 0 || from === to) return;
-  const previousPositions = new Map([...fullPlayerQueueList.querySelectorAll("li[data-queue-id]")].map((row) => [row.dataset.queueId, row.getBoundingClientRect()]));
-  const [record] = queueRecords.splice(from, 1);
-  queueRecords.splice(to, 0, record);
-  savePlayerState(true);
-  animateQueueRender(previousPositions);
+  const rows = queueRows();
+  if (rows.length !== queueRecords.length) return;
+  const others = rows.filter((row) => row.dataset.queueId !== dragQueueId);
+  let destination = others.length;
+  for (let index = 0; index < others.length; index += 1) {
+    const other = others[index];
+    const center = other.getBoundingClientRect().top - translateYOf(other) + other.offsetHeight / 2;
+    if (event.clientY < center) { destination = index; break; }
+  }
+  moveQueueRecord(dragQueueId, destination);
+  const dragged = rows.find((row) => row.dataset.queueId === dragQueueId);
+  if (!dragged) return;
+  const currentY = translateYOf(dragged);
+  const layoutTop = dragged.getBoundingClientRect().top - currentY;
+  dragged.style.setProperty("--queue-drag-y", `${event.clientY - queueDragGrabOffset - layoutTop}px`);
 });
 function finishQueueDrag() {
   window.clearTimeout(queueHoldTimer);
-  if (dragQueueId) {
-    dragQueueId = null;
-    document.querySelectorAll(".queue-drag-handle.is-dragging, .full-player-queue-list li.is-dragging").forEach((element) => element.classList.remove("is-dragging"));
-    renderPlayerQueue();
+  if (!dragQueueId) return;
+  const row = queueRows().find((candidate) => candidate.dataset.queueId === dragQueueId) || queueDragRow;
+  const currentY = row ? translateYOf(row) : 0;
+  dragQueueId = null;
+  queueDragRow = null;
+  document.querySelectorAll(".queue-drag-handle.is-dragging, .full-player-queue-list li.is-dragging").forEach((element) => element.classList.remove("is-dragging"));
+  if (row) {
+    row.style.removeProperty("--queue-drag-y");
+    row.style.transform = "";
+    animateQueueRow(row, { y: [currentY, 0], scale: [1.012, 1] }, { duration: 0.22, ease: MOTION_EASE });
   }
 }
 document.addEventListener("pointerup", finishQueueDrag);
@@ -690,6 +868,7 @@ function playPlayerFromGesture(player) {
     player.src = activeObjectUrl;
   }
   const startTime = Number.isFinite(player.currentTime) ? player.currentTime : 0;
+  if (player === audioPlayer) void prepareCompactVisualizer();
   const playPromise = player.play();
   const requestId = playbackRequestId;
   window.setTimeout(() => {
@@ -717,8 +896,7 @@ function updatePlayerControls() {
   playerToggle.textContent = playing ? "Ⅱ" : "▶";
   playerToggle.setAttribute("aria-label", playing ? "Pause" : "Play");
   playerToggle.title = playing ? "Pause" : "Play";
-  if (visualizerEnabled && playing && activePlayer === audioPlayer) startVisualizerLoop();
-  else stopVisualizerLoop();
+  syncCompactVisualizer();
   updateFullPlayerControls();
   updateVideoTheaterControls();
 }
@@ -1116,7 +1294,7 @@ async function startPlayback(record, startTime = 0, openVideo = false, autoplay 
     currentMediaTitle.textContent = getMediaDisplayTitle(record);
     playerSubtitle.textContent = record.artist || "Puffin Library";
     const isVideo = record.kind === "video";
-    [playerShuffle, playerRepeat, playerVisualizer, playerQueue].forEach((button) => { button.disabled = isVideo; });
+    [playerShuffle, playerRepeat, playerQueue].forEach((button) => { button.disabled = isVideo; });
     document.querySelector("#player-equalizer-open").disabled = isVideo;
     playerTrack.classList.toggle("is-video", isVideo);
     if (record.artwork) playerArtwork.src = record.artwork;
@@ -1207,7 +1385,7 @@ async function stopPlayback() {
   playerArtwork.hidden = false;
   playerVideoFallback.hidden = true;
   playerExpandVideo.hidden = true;
-  [playerShuffle, playerRepeat, playerVisualizer, playerQueue].forEach((button) => { button.disabled = true; });
+  [playerShuffle, playerRepeat, playerQueue].forEach((button) => { button.disabled = true; });
   document.querySelector("#player-equalizer-open").disabled = true;
   playerTrack.classList.remove("is-video");
   playerSubtitle.textContent = "Puffin Library";
@@ -1351,7 +1529,7 @@ document.addEventListener("visibilitychange", () => {
     sampleListeningTime(activePlayer); flushListeningTime(); sampleVideoProgress(true);
   } else {
     if (activePlayer && !activePlayer.paused) playbackSample = { wallTime: performance.now(), position: activePlayer.currentTime };
-    if (visualizerEnabled) startVisualizerLoop();
+    syncCompactVisualizer();
     if (activePlayer === audioPlayer && !audioPlayer.paused) {
       syncSyncedLyrics(fullPlayerLyricsLines, audioPlayer.currentTime);
       startLyricsSyncLoop();
@@ -1408,7 +1586,6 @@ playerShuffle.addEventListener("click", () => setShuffle(!shuffleEnabled));
 document.querySelector("#full-player-shuffle").addEventListener("click", () => setShuffle(!shuffleEnabled));
 playerRepeat.addEventListener("click", cycleRepeat);
 document.querySelector("#full-player-repeat").addEventListener("click", cycleRepeat);
-playerVisualizer.addEventListener("click", toggleVisualizer);
 playerQueue.addEventListener("click", async () => {
   if (activeMediaRecord?.kind !== "audio") return;
   if (!playerFullscreen.hidden && playerPane === "queue") { setPlayerPane("lyrics"); return; }
@@ -1416,7 +1593,6 @@ playerQueue.addEventListener("click", async () => {
   if (playerFullscreen.hidden) openPlayerMode("queue");
   else setPlayerPane("queue");
 });
-document.querySelector("#full-player-visualizer-button").addEventListener("click", toggleVisualizer);
 document.querySelector("#full-player-queue-button").addEventListener("click", async () => {
   if (playerPane === "queue") { setPlayerPane("lyrics"); return; }
   if (activeMediaRecord) await prepareQueue(activeMediaRecord);
@@ -1448,7 +1624,6 @@ fullPlayerSeek.addEventListener("change", commitFullPlayerSeek);
 fullPlayerSeek.addEventListener("pointerup", commitFullPlayerSeek);
 window.addEventListener("puffin:player-mode", (event) => {
   const pane = event.detail || "lyrics";
-  if (pane === "visualizer") { toggleVisualizer(); return; }
   if (pane === "lyrics") {
     if (playerFullscreen.hidden) openPlayerMode("lyrics");
     else setPlayerPane("lyrics");
@@ -1699,7 +1874,6 @@ void (async () => {
     repeatMode = [0, 1, 2].includes(saved.repeat) ? saved.repeat : 1;
     setShuffle(shuffleEnabled);
     if (repeatMode !== 1) { repeatMode = (repeatMode + 2) % 3; cycleRepeat(); }
-    setVisualizerEnabled(Boolean(saved.visualizer));
     const record = byId.get(saved.mediaId);
     if (!record) return;
     await startPlayback(record, Math.max(0, Number(saved.time) || 0), false, false);

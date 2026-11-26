@@ -13,6 +13,7 @@ import {
   setPlaylistPinned,
   setPlaylistArtwork,
 } from "./library.js";
+import { animateElement, MOTION_EASE, prefersReducedMotion } from "./motion.js";
 
 const ICONS = {
   play: "▶",
@@ -81,6 +82,7 @@ export function initializePlaylistLibrary({ onPlay, onDeleted }) {
   let currentLibraryView = "library";
   let dialogAction = null;
   let mediaSearchQuery = "";
+  let lastAnimatedView = null;
 
   function setStatus(message) {
     libraryStatus.textContent = message;
@@ -457,6 +459,16 @@ export function initializePlaylistLibrary({ onPlay, onDeleted }) {
     [mediaRecords, playlists] = await Promise.all([listMediaFiles(), listPlaylists()]);
   }
 
+  function animateViewChange() {
+    const viewKey = `${currentLibraryView}:${activeView}:${mediaKindFilter || "all"}`;
+    if (viewKey === lastAnimatedView) return;
+    const firstView = lastAnimatedView === null;
+    lastAnimatedView = viewKey;
+    if (firstView || prefersReducedMotion()) return;
+    animateElement(playPanel.querySelector(".playlist-view-heading"), { opacity: [0, 1], y: [6, 0] }, { duration: 0.24, ease: MOTION_EASE });
+    animateElement(mediaList, { opacity: [0, 1], y: [10, 0] }, { duration: 0.3, ease: MOTION_EASE, delay: 0.02 });
+  }
+
   async function render() {
     try {
       await loadLibrary();
@@ -466,6 +478,7 @@ export function initializePlaylistLibrary({ onPlay, onDeleted }) {
       renderPlaylistSidebar();
       renderPinnedNavigation();
       renderMediaList();
+      animateViewChange();
       await updateStorageSummary();
     } catch (error) {
       setStatus(`Could not open your library: ${error.message}`);
