@@ -1,0 +1,9 @@
+{
+  "mcp": {
+    "motion": {
+      "type": "remote",
+      "url": "https://mcp.motion.dev",
+      "enabled": true
+    }
+  }
+}
