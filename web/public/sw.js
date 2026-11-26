@@ -1,4 +1,4 @@
-const CACHE_NAME = "puffin-shell-v32";
+const CACHE_NAME = "puffin-shell-v33";
 const APP_SHELL = [
   "/",
   "/index.html",
@@ -88,6 +88,7 @@ self.addEventListener("fetch", (event) => {
   const requestUrl = new URL(request.url);
 
   if (request.method !== "GET" || requestUrl.origin !== self.location.origin) return;
+  if (requestUrl.pathname.startsWith("/api/")) return;
 
   const isNavigation = request.mode === "navigate";
   const isAppShellAsset = APP_SHELL.includes(requestUrl.pathname)

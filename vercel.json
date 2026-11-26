@@ -9,9 +9,20 @@
       "root": "groq-service",
       "framework": "fastapi",
       "entrypoint": "main:app"
+    },
+    "discover": {
+      "root": "discover-service",
+      "framework": "fastapi",
+      "entrypoint": "main:app"
     }
   },
   "rewrites": [
+    {
+      "source": "/api/discover/(.*)",
+      "destination": {
+        "service": "discover"
+      }
+    },
     {
       "source": "/api/smart-fill/(.*)",
       "destination": {

@@ -103,7 +103,7 @@ export function initializeEqualizer({ audioPlayer, videoPlayer }) {
       // A longer FFT resolves the kick and bass region; lighter analyser
       // smoothing keeps transients visible to the beat-reactive visualizer.
       analyser.fftSize = 2048;
-      analyser.smoothingTimeConstant = 0.24;
+      analyser.smoothingTimeConstant = 0.12;
       source.connect(analyser);
       analyser.connect(audioContext.destination);
       route = { player, source, analyser, filters: null, preamp: null };

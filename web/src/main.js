@@ -4,6 +4,7 @@ import { initializePlaylistLibrary } from "./playlist-library.js";
 import { initializeSettings } from "./settings.js";
 import { initializeEdit } from "./edit.js";
 import { initializeHome } from "./home.js";
+import { initializeDiscover } from "./discover.js";
 import { initializeStats } from "./stats.js";
 import { initializeEqualizer } from "./equalizer.js";
 import { initializeWatch } from "./watch.js";
@@ -11,6 +12,7 @@ import { initializeListen } from "./listen.js";
 import { initializeEnrichment } from "./enrichment.js";
 import { renderSyncedLyrics, syncSyncedLyrics } from "./lyrics.js";
 import { createSubtitleController, parseWebVtt } from "./video-subtitles.js";
+import { createAnimationLoop, normalizeFrequencyLevel } from "./visualizer.js";
 import { animateElement, MOTION_EASE, MOTION_SPRING, prefersReducedMotion, translateYOf } from "./motion.js";
 
 const artworkCacheTasks = new Map();
@@ -86,7 +88,6 @@ let playerModeCloseTimer;
 let playerModeReturnFocus = null;
 let visualizerAnalyser = null;
 let visualizerData = null;
-let visualizerFrame = 0;
 let visualizerSetupPromise = null;
 let lyricsSyncFrame = 0;
 let equalizerController = null;
@@ -105,6 +106,13 @@ const visualizerIdleLevels = [0.14, 0.2, 0.3, 0.18, 0.38, 0.18, 0.3, 0.2, 0.14];
 const visualizerLevels = [...visualizerIdleLevels];
 playerVisualizer.replaceChildren(...visualizerBars);
 visualizerBars.forEach((bar, index) => bar.style.setProperty("--level", visualizerLevels[index]));
+const visualizerLoop = createAnimationLoop({
+  requestFrame: window.requestAnimationFrame.bind(window),
+  cancelFrame: window.cancelAnimationFrame.bind(window),
+  canRun: () => Boolean(visualizerAnalyser && !document.hidden && activePlayer === audioPlayer
+    && !audioPlayer.paused && !audioPlayer.ended && document.documentElement.dataset.reduceMotion !== "true"),
+  onFrame: drawVisualizerFrame,
+});
 
 function closeMobileSidebar({ restoreFocus = false } = {}) {
   appShell.classList.remove("is-sidebar-open");
@@ -385,36 +393,27 @@ function startLyricsSyncLoop() {
 }
 
 function stopVisualizerLoop() {
-  if (visualizerFrame) cancelAnimationFrame(visualizerFrame);
-  visualizerFrame = 0;
+  visualizerLoop.stop();
 }
 
 function startVisualizerLoop() {
-  if (visualizerFrame || !visualizerAnalyser || document.hidden || activePlayer !== audioPlayer
-    || audioPlayer.paused || audioPlayer.ended || document.documentElement.dataset.reduceMotion === "true") return;
-  const draw = () => {
-    visualizerFrame = 0;
-    if (!visualizerAnalyser || document.hidden || activePlayer !== audioPlayer
-      || audioPlayer.paused || audioPlayer.ended || document.documentElement.dataset.reduceMotion === "true") return;
-    visualizerAnalyser.getByteFrequencyData(visualizerData);
-    const binWidth = visualizerAnalyser.context.sampleRate / visualizerAnalyser.fftSize;
-    const lowestFrequency = 50;
-    const highestFrequency = Math.min(10000, visualizerAnalyser.context.sampleRate / 2);
-    visualizerBars.forEach((bar, index) => {
-      const startFrequency = lowestFrequency * (highestFrequency / lowestFrequency) ** (index / visualizerBars.length);
-      const endFrequency = lowestFrequency * (highestFrequency / lowestFrequency) ** ((index + 1) / visualizerBars.length);
-      const firstBin = Math.max(1, Math.floor(startFrequency / binWidth));
-      const lastBin = Math.min(visualizerData.length, Math.max(firstBin + 1, Math.ceil(endFrequency / binWidth)));
-      let energy = 0;
-      for (let bin = firstBin; bin < lastBin; bin += 1) energy += visualizerData[bin] ** 2;
-      const average = Math.sqrt(energy / Math.max(1, lastBin - firstBin)) / 255;
-      const target = Math.max(0.12, Math.min(1, Math.max(0, (average - 0.025) / 0.48) ** 0.7));
-      visualizerLevels[index] += (target - visualizerLevels[index]) * (target > visualizerLevels[index] ? 0.62 : 0.18);
-      bar.style.setProperty("--level", visualizerLevels[index].toFixed(2));
-    });
-    visualizerFrame = requestAnimationFrame(draw);
-  };
-  visualizerFrame = requestAnimationFrame(draw);
+  visualizerLoop.start();
+}
+
+function drawVisualizerFrame() {
+  visualizerAnalyser.getByteFrequencyData(visualizerData);
+  const binWidth = visualizerAnalyser.context.sampleRate / visualizerAnalyser.fftSize;
+  const lowestFrequency = 50;
+  const highestFrequency = Math.min(10000, visualizerAnalyser.context.sampleRate / 2);
+  visualizerBars.forEach((bar, index) => {
+    const startFrequency = lowestFrequency * (highestFrequency / lowestFrequency) ** (index / visualizerBars.length);
+    const endFrequency = lowestFrequency * (highestFrequency / lowestFrequency) ** ((index + 1) / visualizerBars.length);
+    const firstBin = Math.max(1, Math.floor(startFrequency / binWidth));
+    const lastBin = Math.min(visualizerData.length, Math.max(firstBin + 1, Math.ceil(endFrequency / binWidth)));
+    const target = normalizeFrequencyLevel(visualizerData, firstBin, lastBin);
+    visualizerLevels[index] += (target - visualizerLevels[index]) * (target > visualizerLevels[index] ? 0.82 : 0.36);
+    bar.style.setProperty("--level", visualizerLevels[index].toFixed(2));
+  });
 }
 
 function resetVisualizerBars() {
@@ -426,8 +425,7 @@ function resetVisualizerBars() {
 }
 
 async function prepareCompactVisualizer() {
-  if (visualizerAnalyser || visualizerSetupPromise || playerVisualizer.dataset.available === "false"
-    || activePlayer !== audioPlayer || !equalizerController) return;
+  if (visualizerAnalyser || visualizerSetupPromise || activePlayer !== audioPlayer || !equalizerController) return;
   visualizerSetupPromise = equalizerController.getAnalyser(audioPlayer)
     .then((analyser) => {
       visualizerAnalyser = analyser;
@@ -435,7 +433,6 @@ async function prepareCompactVisualizer() {
       if (activePlayer === audioPlayer && !audioPlayer.paused) startVisualizerLoop();
     })
     .catch((error) => {
-      playerVisualizer.dataset.available = "false";
       console.warn("Puffin could not start the compact audio visualizer:", error);
     })
     .finally(() => { visualizerSetupPromise = null; });
@@ -1438,6 +1435,7 @@ for (const player of [audioPlayer, videoPlayer]) {
     });
   }
   player.addEventListener("play", () => {
+    if (player === audioPlayer && player === activePlayer) syncCompactVisualizer();
     if (player === activePlayer) setPlayerStatus("");
     if (player === activePlayer && player === audioPlayer) {
       playbackSample = { wallTime: performance.now(), position: player.currentTime };
@@ -1854,6 +1852,25 @@ initializeHome({
     playlistQueueActive = true;
     setShuffle(true);
     await startPlayback(items[Math.floor(Math.random() * items.length)]);
+  },
+});
+initializeDiscover({
+  onFindMusic: (query) => {
+    document.querySelector('[data-tab="download"]')?.click();
+    window.dispatchEvent(new CustomEvent("puffin:download-pick", { detail: { query } }));
+  },
+  onOpenLibrary: () => {
+    document.querySelector('[data-tab="play"][data-library-view="library"]')?.click();
+  },
+  onSearchLibrary: (query) => {
+    document.querySelector('[data-tab="listen"]')?.click();
+    requestAnimationFrame(() => {
+      const input = document.querySelector("#listen-search");
+      if (!input) return;
+      input.value = query;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.focus();
+    });
   },
 });
 initializeStats();

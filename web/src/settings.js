@@ -25,10 +25,6 @@ export function initializeSettings() {
   const capacityWarning = document.querySelector("#settings-capacity-warning");
   const storageStatus = document.querySelector("#settings-storage-status");
   const showRecent = document.querySelector("#settings-show-recent");
-  const showPicks = document.querySelector("#settings-show-picks");
-  const musicAtlasForm = document.querySelector("#settings-musicatlas-form");
-  const musicAtlasKey = document.querySelector("#settings-musicatlas-key");
-  const musicAtlasRemove = document.querySelector("#settings-musicatlas-remove");
   const homeStatus = document.querySelector("#settings-home-status");
   const acoustidForm = document.querySelector("#settings-acoustid-form");
   const acoustidKey = document.querySelector("#settings-acoustid-key");
@@ -43,8 +39,6 @@ export function initializeSettings() {
 
   const homePreferences = getHomePreferences();
   showRecent.checked = homePreferences.showRecentlyPlayed;
-  showPicks.checked = homePreferences.showMusicPicks;
-  musicAtlasKey.value = homePreferences.musicAtlasApiKey;
   acoustidKey.value = homePreferences.acoustidClientKey;
   const downloadPreferences = getDownloadPreferences();
   piAddress.value = downloadPreferences.piAddress;
@@ -121,8 +115,6 @@ export function initializeSettings() {
     try {
       saveHomePreferences({
         showRecentlyPlayed: showRecent.checked,
-        showMusicPicks: showPicks.checked,
-        musicAtlasApiKey: musicAtlasKey.value,
         acoustidClientKey: acoustidKey.value,
       });
       homeStatus.textContent = "Home preferences saved on this device.";
@@ -131,29 +123,17 @@ export function initializeSettings() {
     }
   }
   showRecent.addEventListener("change", persistHomeVisibility);
-  showPicks.addEventListener("change", persistHomeVisibility);
-  musicAtlasForm.addEventListener("submit", (event) => {
-    event.preventDefault();
-    persistHomeVisibility();
-  });
   acoustidForm.addEventListener("submit", (event) => {
     event.preventDefault();
     try {
       saveHomePreferences({
         showRecentlyPlayed: showRecent.checked,
-        showMusicPicks: showPicks.checked,
-        musicAtlasApiKey: musicAtlasKey.value,
         acoustidClientKey: acoustidKey.value,
       });
       acoustidStatus.textContent = "AcoustID key saved on this device.";
     } catch (error) {
       acoustidStatus.textContent = error.message;
     }
-  });
-  musicAtlasRemove.addEventListener("click", () => {
-    musicAtlasKey.value = "";
-    persistHomeVisibility();
-    homeStatus.textContent = "MusicAtlas key removed from this browser.";
   });
   acoustidRemove.addEventListener("click", () => {
     acoustidKey.value = "";

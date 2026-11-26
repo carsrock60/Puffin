@@ -26,9 +26,12 @@
           <button id="sidebar-collapse" class="sidebar-collapse" type="button" aria-label="Collapse sidebar" aria-controls="app-sidebar" aria-expanded="true" title="Collapse sidebar"><span aria-hidden="true">‹</span></button>
         </div>
         <nav class="nav-list" aria-label="Sections">
-          <section class="nav-group" aria-labelledby="nav-discover-heading">
-            <h2 class="nav-group-heading" id="nav-discover-heading">Discover</h2>
-            <button class="nav-button" type="button" data-tab="home" aria-current="page" aria-label="Home" title="Home">
+          <section class="nav-group" aria-labelledby="nav-browse-heading">
+            <h2 class="nav-group-heading" id="nav-browse-heading">Browse</h2>
+            <button class="nav-button" type="button" data-tab="discover" aria-current="page" aria-label="Discover" title="Discover">
+              <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Zm3.1 5.9-1.9 5.2-5.2 1.9 1.9-5.2 5.2-1.9Z"/></svg></span><span class="nav-label">Discover</span>
+            </button>
+            <button class="nav-button" type="button" data-tab="home" aria-label="Home" title="Home">
               <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m3 10 9-7 9 7M5.5 9v11h13V9M9.5 20v-6h5v6"/></svg></span><span class="nav-label">Home</span>
             </button>
             <button class="nav-button" type="button" data-tab="listen" aria-label="Listen" title="Listen">
@@ -77,7 +80,69 @@
         </header>
 
         <main>
-          <section class="panel home-panel" id="home-panel" data-panel="home" aria-labelledby="home-title">
+          <section class="panel discover-panel" id="discover-panel" data-panel="discover" aria-labelledby="discover-title">
+            <header class="discover-heading">
+              <div class="discover-heading-copy">
+                <p class="discover-eyebrow">MADE FOR YOUR EARS</p>
+                <h1 id="discover-title" tabindex="-1">Discover</h1>
+                <p class="discover-intro">A fresh mix of artists and albums, shaped by what you already love.</p>
+                <p id="discover-context" class="discover-context" hidden></p>
+              </div>
+              <button id="discover-refresh" class="discover-refresh" type="button" title="Refresh recommendations">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg>
+                <span id="discover-refresh-label">Refresh</span>
+              </button>
+            </header>
+
+            <div id="discover-status" class="discover-status" role="status" aria-live="polite" hidden>
+              <span class="discover-status-mark" aria-hidden="true">✦</span>
+              <div class="discover-status-copy">
+                <strong id="discover-status-title"></strong>
+                <p id="discover-status-message"></p>
+                <button id="discover-status-action" class="discover-status-action" type="button" hidden></button>
+              </div>
+            </div>
+
+            <section id="discover-recommendations-section" class="discover-section" aria-labelledby="discover-recommendations-title">
+              <div class="discover-section-heading">
+                <div>
+                  <p class="discover-kicker">YOUR NEXT FAVORITES</p>
+                  <h2 id="discover-recommendations-title">Recommended for you</h2>
+                </div>
+                <p id="discover-updated" class="discover-updated"></p>
+              </div>
+              <div id="discover-skeleton" class="discover-artist-grid" aria-hidden="true"></div>
+              <div id="discover-recommendations" class="discover-artist-grid" role="list"></div>
+            </section>
+
+            <section id="discover-explore-section" class="discover-section" aria-labelledby="discover-explore-title" hidden>
+              <div class="discover-section-heading">
+                <div>
+                  <p class="discover-kicker">KEEP EXPLORING</p>
+                  <h2 id="discover-explore-title">Explore artists</h2>
+                </div>
+                <p class="discover-section-note">A little further from the familiar.</p>
+              </div>
+              <div id="discover-explore" class="discover-explore-row" role="list"></div>
+            </section>
+
+            <section id="discover-albums-section" class="discover-section" aria-labelledby="discover-albums-title" hidden>
+              <div class="discover-section-heading">
+                <div>
+                  <p class="discover-kicker">GO DEEPER</p>
+                  <h2 id="discover-albums-title">Discover albums</h2>
+                </div>
+                <p class="discover-section-note">Artwork and details from MusicBrainz and Cover Art Archive.</p>
+              </div>
+              <div id="discover-albums" class="discover-album-grid" role="list"></div>
+            </section>
+
+            <footer id="discover-footer" class="discover-footer">
+              <p>Artist photos from Fanart.tv and Last.fm. Album data from MusicBrainz, Cover Art Archive, and iTunes.</p>
+            </footer>
+          </section>
+
+          <section class="panel home-panel" id="home-panel" data-panel="home" aria-labelledby="home-title" hidden>
             <h1 id="home-title">Home</h1>
             <div class="home-sections">
               <section class="home-section" id="recently-played-section" aria-labelledby="recently-played-title">
@@ -92,24 +157,6 @@
                 <ol id="recently-played-list" class="recently-played-list" aria-label="Your last 30 played songs" hidden></ol>
               </section>
               <section class="home-section" aria-labelledby="quick-play-title"><div class="home-section-heading"><h2 id="quick-play-title">Quick Play</h2></div><p id="quick-play-empty" class="home-empty-state">Your playlists will appear here.</p><ol id="quick-play-list" class="quick-play-list"></ol></section>
-              <section class="home-section" id="music-picks-section" aria-labelledby="music-picks-title">
-                <div class="home-section-heading">
-                  <h2 id="music-picks-title">Music picks</h2>
-                  <div class="music-picks-controls">
-                    <label class="music-picks-sort">
-                      <span>Sort</span>
-                      <select id="music-picks-sort" aria-label="Sort music picks by relevance">
-                        <option value="desc">Most relevant</option>
-                        <option value="asc">Least relevant</option>
-                      </select>
-                    </label>
-                    <button id="music-picks-refresh" class="secondary-button music-picks-refresh" type="button" aria-label="Refresh music picks">↻ <span id="music-picks-refresh-label">Refresh</span></button>
-                  </div>
-                </div>
-                <p id="music-picks-status" class="home-empty-state" role="status" aria-live="polite">Add a MusicAtlas API key in Settings to get music picks.</p>
-                <ol id="music-picks-list" class="music-picks-list" aria-label="Recommended songs" hidden></ol>
-                <p id="musicatlas-attribution" class="musicatlas-attribution" hidden>Music recommendations by <a href="https://musicatlas.ai/" target="_blank" rel="noreferrer">MusicAtlas</a></p>
-              </section>
             </div>
           </section>
 
@@ -509,6 +556,39 @@
       </div>
     </dialog>
 
+    <dialog id="discover-artist-dialog" class="discover-artist-dialog" aria-labelledby="discover-dialog-title">
+      <article class="discover-dialog-card">
+        <button id="discover-dialog-close" class="discover-dialog-close" type="button" aria-label="Close artist details" title="Close">×</button>
+        <div id="discover-dialog-hero" class="discover-dialog-hero">
+          <div id="discover-dialog-art" class="discover-dialog-art"></div>
+          <div class="discover-dialog-shade"></div>
+          <header class="discover-dialog-heading">
+            <p id="discover-dialog-kicker" class="discover-dialog-kicker">ARTIST PROFILE</p>
+            <h2 id="discover-dialog-title"></h2>
+            <div id="discover-dialog-tags" class="discover-dialog-tags"></div>
+          </header>
+        </div>
+        <div class="discover-dialog-body">
+          <p id="discover-dialog-status" class="discover-dialog-status" role="status" aria-live="polite" hidden></p>
+          <p id="discover-dialog-bio" class="discover-dialog-bio" hidden></p>
+          <div class="discover-dialog-actions">
+            <button id="discover-dialog-find" class="discover-dialog-find" type="button">Find music</button>
+            <button id="discover-dialog-library" class="discover-dialog-secondary" type="button">Open library</button>
+            <button id="discover-dialog-search" class="discover-dialog-secondary" type="button">Search Puffin</button>
+          </div>
+          <section id="discover-dialog-albums-section" class="discover-dialog-section" aria-labelledby="discover-dialog-albums-title" hidden>
+            <h3 id="discover-dialog-albums-title">Albums</h3>
+            <div id="discover-dialog-albums" class="discover-dialog-albums"></div>
+          </section>
+          <section id="discover-dialog-tracks-section" class="discover-dialog-section" aria-labelledby="discover-dialog-tracks-title" hidden>
+            <h3 id="discover-dialog-tracks-title">Popular tracks</h3>
+            <ol id="discover-dialog-tracks" class="discover-dialog-tracks"></ol>
+          </section>
+          <p id="discover-dialog-credit" class="discover-dialog-credit"></p>
+        </div>
+      </article>
+    </dialog>
+
     <dialog id="settings-dialog" class="settings-dialog" aria-labelledby="settings-title">
       <div class="settings-layout">
         <aside class="settings-sidebar" aria-label="Settings sections">
@@ -536,17 +616,9 @@
               <p class="muted">Choose which listening sections appear on your Home page.</p>
               <div class="settings-home-options">
                 <label class="settings-toggle-row"><span><strong>Recently played</strong><small>Show your recent listening history.</small></span><input id="settings-show-recent" type="checkbox" checked /></label>
-                <label class="settings-toggle-row"><span><strong>Music picks</strong><small>Show song suggestions based on your local listening history.</small></span><input id="settings-show-picks" type="checkbox" checked /></label>
               </div>
-              <form id="settings-musicatlas-form" class="settings-storage-form">
-                <label class="form-field" for="settings-musicatlas-key"><span>MusicAtlas API key</span><input id="settings-musicatlas-key" type="password" autocomplete="off" placeholder="Paste your API key" /></label>
-                <p class="muted settings-hint">Stored in this browser only, never in Puffin’s code or logs, and sent only to MusicAtlas when music picks load. <a href="https://musicatlas.ai/developer/request-key" target="_blank" rel="noreferrer">Get a free MusicAtlas API key</a>. The free tier includes 100 requests per day.</p>
-                <div class="settings-actions">
-                  <button class="primary-button" type="submit">Save MusicAtlas key</button>
-                  <button id="settings-musicatlas-remove" class="secondary-button" type="button">Remove saved key</button>
-                </div>
-                <p id="settings-home-status" class="muted" role="status" aria-live="polite"></p>
-              </form>
+              <p class="muted settings-hint">Discover is built into Puffin and learns from your library automatically. Music-service keys stay on the server and are never stored in this browser.</p>
+              <p id="settings-home-status" class="muted" role="status" aria-live="polite"></p>
               <form id="settings-acoustid-form" class="settings-storage-form">
                 <label class="form-field" for="settings-acoustid-key"><span>AcoustID application key</span><input id="settings-acoustid-key" type="password" autocomplete="off" placeholder="Paste your application key" /></label>
                 <p class="muted settings-hint">Stored in this browser only. Lookups send the key, a fingerprint, and the duration to AcoustID over HTTPS; the audio file never leaves this device. <a href="https://acoustid.org/new-application" target="_blank" rel="noreferrer">Register a free application key</a>. AcoustID’s free service is for non-commercial use.</p>
@@ -647,8 +719,8 @@
               <h3>Stays on this device</h3>
               <ul class="settings-dataflow">
                 <li><strong>Media, artwork, subtitles, and playlists</strong><span>Saved in this browser’s storage (IndexedDB). They are never uploaded to Puffin or synced to another device.</span></li>
-                <li><strong>Listening history and statistics</strong><span>Recently played, watch progress, play counts, and library totals stay in this browser and are not sent anywhere.</span></li>
-                <li><strong>Settings and API keys</strong><span>Your Pi address, MusicAtlas key, and AcoustID key are saved in this browser only. Clearing site data erases them along with your library.</span></li>
+                <li><strong>Listening history and statistics</strong><span>Recently played, watch progress, play counts, and library totals stay in this browser. Discover sends only a compact seed profile, described below.</span></li>
+                <li><strong>Settings and API keys</strong><span>Your Pi address and AcoustID key are saved in this browser only. Clearing site data erases them along with your library.</span></li>
               </ul>
 
               <h3>Sent to your Raspberry Pi</h3>
@@ -657,17 +729,19 @@
               <h3>Sent to other services</h3>
               <ul class="settings-dataflow">
                 <li><strong>YouTube</strong><span>Receives the search or video request from your Pi.</span></li>
-                <li><strong>MusicAtlas</strong><span>Receives the artist and title of the seed song plus your API key, only when music picks are enabled.</span></li>
+                <li><strong>Puffin’s discovery service</strong><span>Receives only a compact profile: up to 8 artist names, up to 2 track titles per artist, coarse play and library counts, and names to avoid. It never receives your media files, playlists, or raw listening history.</span></li>
+                <li><strong>Last.fm</strong><span>Receives an artist name or a seed track title from Puffin’s discovery service to find similar music. The project key stays on the server.</span></li>
+                <li><strong>Fanart.tv</strong><span>Receives a MusicBrainz artist ID from Puffin’s discovery service to find an artist photo. The project key stays on the server.</span></li>
                 <li><strong>AcoustID</strong><span>Receives an audio fingerprint, the track duration, and your application key when identifying songs. The audio file itself is never uploaded.</span></li>
-                <li><strong>MusicBrainz and Cover Art Archive</strong><span>Receive artist and title searches and release artwork requests during Smart Fill and metadata editing.</span></li>
+                <li><strong>MusicBrainz and Cover Art Archive</strong><span>Receive artist and title searches and release artwork requests during Discover, Smart Fill, and metadata editing.</span></li>
                 <li><strong>LRCLIB</strong><span>Receives artist and title to look up lyrics.</span></li>
-                <li><strong>iTunes Search API</strong><span>Receives artist and title to find artwork for music picks.</span></li>
+                <li><strong>iTunes Search API</strong><span>Receives artist and album names to find artwork for Discover albums.</span></li>
                 <li><strong>Puffin’s Smart Fill service (Groq)</strong><span>Receives the raw track title and candidate lists to rank matches. The Groq key stays on that server and is never stored in this browser.</span></li>
-                <li><strong>Vercel</strong><span>Serves the Puffin app and its Smart Fill endpoint; your library is not part of those requests.</span></li>
+                <li><strong>Vercel</strong><span>Serves the Puffin app and its Smart Fill and Discover endpoints; your library is not part of those requests.</span></li>
               </ul>
 
               <h3>What never leaves</h3>
-              <p class="muted settings-dataflow-copy">Your media files, playlists, listening history, and library statistics are never uploaded. Each service above receives only the small text, query, or fingerprint described, and handles it under its own privacy policy.</p>
+              <p class="muted settings-dataflow-copy">Your media files, playlists, full library, and raw listening history are never uploaded. Discover sends only the compact seed profile described above, and each service receives only the small text, query, or identifier described. Every service handles it under its own privacy policy.</p>
             </section>
             <section data-settings-panel="about" hidden>
               <h2>About Puffin</h2>
