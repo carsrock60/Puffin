@@ -2,6 +2,7 @@ import { assertMediaStorageCapacity, getMediaStorageCapacity, recordPuffinActivi
 import { describeDownloadStage } from "./download-stage.js";
 import { formatBytes, guardReadyPiDownload, MediaCapacityError } from "./media-capacity.js";
 import { piSupportsVideoQuality, videoHeightForSliderValue, videoQualityLabel } from "./video-quality.js";
+import { animateElement, MOTION_EASE } from "./motion.js";
 
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
@@ -254,6 +255,7 @@ export function initializeDownloader() {
   const status = document.querySelector("#download-status");
   let downloadSource = "link";
   let selectedBrowseVideo = false;
+  let sourceTransition = null;
   let activeDownload = null;
 
   cancelButton.addEventListener("click", async () => {
@@ -271,7 +273,7 @@ export function initializeDownloader() {
     }
   });
 
-  function setDownloadSource(source) {
+  function setDownloadSource(source, { animate = false } = {}) {
     downloadSource = source;
     const browsing = source === "browse";
     youtubeLinkField.hidden = browsing;
@@ -288,6 +290,15 @@ export function initializeDownloader() {
     downloadSourceBrowse.classList.toggle("is-selected", browsing);
     downloadSourceLink.setAttribute("aria-pressed", String(!browsing));
     downloadSourceBrowse.setAttribute("aria-pressed", String(browsing));
+
+    if (animate) {
+      sourceTransition?.stop();
+      const entering = browsing ? youtubeBrowsePanel : downloadLinkRow;
+      sourceTransition = animateElement(entering, { opacity: [0, 1], y: [8, 0] }, {
+        duration: 0.22,
+        ease: MOTION_EASE,
+      });
+    }
   }
 
   function formatDuration(seconds) {
@@ -390,8 +401,8 @@ export function initializeDownloader() {
     }
   }
 
-  downloadSourceLink.addEventListener("click", () => setDownloadSource("link"));
-  downloadSourceBrowse.addEventListener("click", () => setDownloadSource("browse"));
+  downloadSourceLink.addEventListener("click", () => setDownloadSource("link", { animate: true }));
+  downloadSourceBrowse.addEventListener("click", () => setDownloadSource("browse", { animate: true }));
   youtubeSearchButton.addEventListener("click", searchYouTube);
   youtubeSearchQuery.addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
@@ -415,7 +426,7 @@ export function initializeDownloader() {
   window.addEventListener("puffin:download-pick", (event) => {
     const query = event.detail?.query?.trim();
     if (!query) return;
-    setDownloadSource("browse");
+    setDownloadSource("browse", { animate: true });
     youtubeUrl.value = "";
     youtubeSelectedVideo.hidden = true;
     youtubeSearchQuery.value = query;

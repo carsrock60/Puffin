@@ -1,4 +1,5 @@
 import { getMediaDisplayTitle, getMediaStorageCapacity, getPuffinStats, listMediaFiles } from "./library.js";
+import { animateElement, MOTION_EASE } from "./motion.js";
 
 const $ = (selector) => document.querySelector(selector);
 const number = new Intl.NumberFormat();
@@ -55,7 +56,7 @@ function renderList(selector, items, emptyMessage) {
   list.hidden = items.length === 0;
 }
 function filtered(days) { return days.filter(([key]) => !rangeStart() || key >= rangeStart()); }
-function renderChart(days) {
+function renderChart(days, { animateRange = false } = {}) {
   const buckets = new Map();
   const now = new Date();
   if (range === "all") {
@@ -77,13 +78,21 @@ function renderChart(days) {
   const maximum = Math.max(...values.map((item) => item.value), 1);
   const chart = $("#stats-chart"); const labels = $("#stats-chart-labels");
   chart.replaceChildren(); labels.replaceChildren();
-  values.forEach((item) => {
+  values.forEach((item, index) => {
     const column = document.createElement("div"); column.className = "stats-chart-column";
     const bar = document.createElement("span"); bar.className = "stats-chart-bar";
     bar.style.height = `${item.value ? Math.max(4, item.value / maximum * 100) : 0}%`;
     bar.title = `${item.label}: ${formatDuration(item.value)}`;
     bar.setAttribute("aria-label", bar.title);
     column.append(bar); chart.append(column);
+    if (animateRange) {
+      animateElement(bar, { scaleY: [0.82, 1], opacity: [0.65, 1] }, {
+        duration: 0.22,
+        delay: Math.min(index * 0.008, 0.1),
+        ease: MOTION_EASE,
+        transformOrigin: "bottom",
+      });
+    }
     const label = document.createElement("span"); label.textContent = item.label; labels.append(label);
   });
   const total = values.reduce((n, item) => n + item.value, 0);
@@ -112,7 +121,7 @@ function renderErrors(stats, days) {
   $("#stats-errors-wrap").hidden = errors.length === 0;
 }
 
-async function renderStats() {
+async function renderStats({ animateRange = false } = {}) {
   const [records, stats, capacity] = await Promise.all([listMediaFiles(), getPuffinStats(), getMediaStorageCapacity()]);
   const audio = records.filter((record) => record.kind === "audio");
   const videos = records.filter((record) => record.kind === "video");
@@ -131,7 +140,7 @@ async function renderStats() {
   if (hasAnyListening) {
     $("#stats-chart-wrap").hidden = !hasRangeListening;
     $("#stats-chart-empty").hidden = hasRangeListening;
-    if (hasRangeListening) renderChart(selectedDays);
+    if (hasRangeListening) renderChart(selectedDays, { animateRange });
     if (!hasRangeListening) { $("#stats-chart").replaceChildren(); $("#stats-chart-labels").replaceChildren(); }
     const weekStartDate = new Date(); weekStartDate.setHours(0, 0, 0, 0); weekStartDate.setDate(weekStartDate.getDate() - 6);
     const weekDays = matchingDays(stats, localKey(weekStartDate));
@@ -169,7 +178,7 @@ export function initializeStats() {
   document.querySelectorAll("[data-stats-range]").forEach((button) => button.addEventListener("click", () => {
     range = button.dataset.statsRange;
     document.querySelectorAll("[data-stats-range]").forEach((item) => item.setAttribute("aria-pressed", String(item === button)));
-    renderStats().catch(showError);
+    renderStats({ animateRange: true }).catch(showError);
   }));
   function showError(error) { $("#stats-status").textContent = error.message || "Could not load your local stats."; }
   const refresh = () => {
