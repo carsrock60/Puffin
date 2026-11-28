@@ -1,0 +1,106 @@
+name: Desktop release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            label: macOS Apple silicon
+            arch: arm64
+            script: dist:mac
+          - os: macos-15-intel
+            label: macOS Intel
+            arch: x64
+            script: dist:mac:intel
+          - os: windows-latest
+            label: Windows x64
+            arch: x64
+            script: dist:win
+    runs-on: ${{ matrix.os }}
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      npm_config_cache: ${{ github.workspace }}/.npm-cache
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            web/package-lock.json
+            desktop/package-lock.json
+
+      - name: Install website dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Install desktop dependencies
+        working-directory: desktop
+        run: npm ci
+
+      - name: Verify the release tag matches the app version
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          version="$(node -p "require('./desktop/package.json').version")"
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match desktop/package.json version $version" >&2
+            exit 1
+          fi
+
+      - name: Run website tests
+        working-directory: web
+        run: npm test
+
+      - name: Run desktop tests
+        working-directory: desktop
+        run: npm test
+
+      - name: Build installer
+        working-directory: desktop
+        run: npm run ${{ matrix.script }}
+
+      - name: Upload installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: puffin-${{ matrix.arch }}-${{ matrix.os }}
+          if-no-files-found: error
+          path: |
+            desktop/release/*.dmg
+            desktop/release/*.zip
+            desktop/release/*.exe
+            desktop/release/latest.yml
+            desktop/release/*.blockmap
+
+  publish:
+    name: Publish GitHub release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Download installers
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Publish release assets
+        run: |
+          gh release create "$GITHUB_REF_NAME" artifacts/* --generate-notes --title "Puffin $GITHUB_REF_NAME" || gh release upload "$GITHUB_REF_NAME" artifacts/* --clobber

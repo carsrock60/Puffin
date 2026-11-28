@@ -10,6 +10,8 @@ import { initializeEqualizer } from "./equalizer.js";
 import { initializeWatch } from "./watch.js";
 import { initializeListen } from "./listen.js";
 import { initializeEnrichment } from "./enrichment.js";
+import { initializeDesktopInstall } from "./desktop-install.js";
+import { initializeUpdates } from "./updates.js";
 import { renderSyncedLyrics, syncSyncedLyrics } from "./lyrics.js";
 import { createSubtitleController, parseWebVtt } from "./video-subtitles.js";
 import { createAnimationLoop, normalizeFrequencyLevel } from "./visualizer.js";
@@ -1831,10 +1833,12 @@ playerDock.addEventListener("focusout", (event) => {
   if (!playerDock.contains(event.relatedTarget)) setDockRevealed(playerPinnedOpen);
 });
 
+initializeDesktopInstall();
 initializeDownloader();
 initializeEnrichment();
 installMediaSessionActions();
 initializeSettings();
+initializeUpdates();
 initializeEdit({
   onPreview: async (record) => {
     await startPlayback(record);
@@ -1897,7 +1901,7 @@ void (async () => {
   } catch { /* Ignore a damaged or unavailable saved session. */ }
 })();
 
-if ("serviceWorker" in navigator && window.isSecureContext) {
+if (!window.puffinDesktop?.isDesktop && "serviceWorker" in navigator && window.isSecureContext) {
   window.addEventListener("load", () => {
     navigator.serviceWorker.register("/sw.js").catch((error) => {
       console.error("Puffin could not register its offline app worker:", error);

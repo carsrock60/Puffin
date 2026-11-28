@@ -32,14 +32,14 @@ export function assertMediaFits(usedBytes, limitBytes, incomingBytes) {
   return capacity;
 }
 
-export async function guardReadyPiDownload({ fileSize, assertCapacity, cancelDownload }) {
+export async function guardReadyDownload({ fileSize, assertCapacity, cancelDownload }) {
   try {
     await assertCapacity(fileSize);
   } catch (capacityError) {
     try {
       await cancelDownload();
     } catch {
-      capacityError.message = `${capacityError.message} The Pi could not confirm cleanup; its temporary copy will expire automatically.`;
+      capacityError.message = `${capacityError.message} Puffin could not clean up the temporary download immediately; it will be retried automatically.`;
     }
     throw capacityError;
   }

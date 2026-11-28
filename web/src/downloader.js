@@ -1,81 +1,11 @@
 import { assertMediaStorageCapacity, getMediaStorageCapacity, recordPuffinActivity, saveMediaFile } from "./library.js";
 import { describeDownloadStage } from "./download-stage.js";
-import { formatBytes, guardReadyPiDownload, MediaCapacityError } from "./media-capacity.js";
-import { piSupportsVideoQuality, videoHeightForSliderValue, videoQualityLabel } from "./video-quality.js";
+import { formatBytes, guardReadyDownload, MediaCapacityError } from "./media-capacity.js";
+import { videoHeightForSliderValue, videoQualityLabel } from "./video-quality.js";
 import { animateElement, MOTION_EASE } from "./motion.js";
-
-const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
-
-function getPiBaseUrl(value) {
-  let parsed;
-  try {
-    parsed = new URL(value.trim());
-  } catch {
-    throw new Error("Enter the Pi's HTTPS address from Tailscale Serve.");
-  }
-
-  if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.search || parsed.hash || parsed.pathname !== "/") {
-    throw new Error("Use the Pi's HTTPS Tailscale address, for example https://pi-name.tailnet.ts.net.");
-  }
-
-  return parsed.origin;
-}
-
-async function responsePayload(response) {
-  const text = await response.text();
-  if (!text) return {};
-  try {
-    return JSON.parse(text);
-  } catch {
-    return { error: text };
-  }
-}
-
-async function requestJson(baseUrl, endpoint, options) {
-  const response = await fetch(`${baseUrl}${endpoint}`, options);
-  const payload = await responsePayload(response);
-  if (!response.ok) throw new Error(payload.error || `Pi request failed (${response.status}).`);
-  return payload;
-}
 
 function setStatus(element, message) {
   element.textContent = message;
-}
-
-async function checkPi(baseUrl, requestedVideoHeight = null) {
-  const health = await requestJson(baseUrl, "/api/health");
-  if (!health.ok) throw new Error("The Pi service did not return a healthy status.");
-  if (requestedVideoHeight !== null && !piSupportsVideoQuality(health, requestedVideoHeight)) {
-    throw new Error("The Pi downloader is outdated and cannot apply the video quality slider. Update and restart the Pi downloader service, then retry.");
-  }
-}
-
-function videoHeightLabel(height) {
-  return height === 2160 ? "4K" : `${height}p`;
-}
-
-async function confirmPiSavedFile(baseUrl, jobId) {
-  for (let attempt = 0; attempt < 8; attempt += 1) {
-    const response = await fetch(`${baseUrl}/api/downloads/${jobId}/complete`, { method: "POST" });
-    if (response.ok) return true;
-
-    const payload = await responsePayload(response);
-    if (response.status !== 409) {
-      throw new Error(payload.error || `Pi cleanup confirmation failed (${response.status}).`);
-    }
-    await sleep(250);
-  }
-  return false;
-}
-
-async function cancelPiDownload(baseUrl, jobId) {
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    const response = await fetch(`${baseUrl}/api/downloads/${jobId}`, { method: "DELETE" });
-    if (response.ok || response.status === 404) return;
-    if (response.status !== 409) throw new Error(`Pi cleanup failed (${response.status}).`);
-    await sleep(250);
-  }
-  throw new Error("The Pi is still finishing the transfer. Its temporary file will expire automatically.");
 }
 
 function formatTime(seconds) {
@@ -83,25 +13,6 @@ function formatTime(seconds) {
   const rounded = Math.ceil(seconds);
   const minutes = Math.floor(rounded / 60);
   return minutes ? `${minutes}:${String(rounded % 60).padStart(2, "0")}` : `${rounded}s`;
-}
-
-function getSupportedAudioFormats() {
-  const probe = document.createElement("audio");
-  const candidates = {
-    m4a: ['audio/mp4; codecs="mp4a.40.2"', "audio/x-m4a"],
-    mp3: ["audio/mpeg"],
-    webm: ['audio/webm; codecs="opus"'],
-    opus: ['audio/ogg; codecs="opus"', "audio/opus"],
-    ogg: ['audio/ogg; codecs="vorbis"'],
-    oga: ['audio/ogg; codecs="vorbis"'],
-    flac: ["audio/flac"],
-    wav: ['audio/wav; codecs="1"', "audio/wav"],
-    aac: ["audio/aac"],
-    aiff: ["audio/aiff"],
-  };
-  return Object.entries(candidates)
-    .filter(([, mimeTypes]) => mimeTypes.some((mimeType) => probe.canPlayType(mimeType) !== ""))
-    .map(([extension]) => extension);
 }
 
 function filenameFromResponse(response, sourceUrl, mimeType) {
@@ -141,9 +52,9 @@ async function readDirectMedia(response, sourceUrl, capacity, onProgress) {
   const name = filenameFromResponse(response, sourceUrl, mimeType);
   if (!mimeType.startsWith("audio/") && !mimeType.startsWith("video/") && !/\.(m4a|mp3|aac|wav|flac|ogg|opus|mp4|m4v|mov|webm|ogv)$/i.test(name)) {
     await response.body?.cancel();
-    throw new Error("This link did not return a recognizable audio or video file. Use a direct media-file URL.");
+    throw new Error("Puffin could not read the downloaded media file.");
   }
-  if (!response.body?.getReader) throw new Error("This browser cannot stream the response. Try the Raspberry Pi download option.");
+  if (!response.body?.getReader) throw new Error("Puffin cannot stream this response on this device.");
   const total = Number(response.headers.get("Content-Length")) || 0;
   if (total && total > capacity.remainingBytes) {
     await response.body.cancel();
@@ -217,9 +128,45 @@ async function videoFrameArtwork(blob) {
   }
 }
 
+function waitForJob(desktopDownloads, jobId, { signal, onStage }) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (fn, value) => {
+      if (settled) return;
+      settled = true;
+      unsubscribe();
+      signal?.removeEventListener("abort", onAbort);
+      fn(value);
+    };
+    const handler = (payload) => {
+      if (!payload || payload.jobId !== jobId) return;
+      onStage(payload);
+      if (payload.status === "ready") finish(resolve, payload);
+      else if (payload.status === "failed") finish(reject, new Error(payload.error || "The on-device download failed."));
+      else if (payload.status === "cancelled") finish(reject, new DOMException("Download cancelled.", "AbortError"));
+    };
+    const onAbort = () => finish(reject, new DOMException("Download cancelled.", "AbortError"));
+    const unsubscribe = desktopDownloads.onProgress(handler);
+    signal?.addEventListener("abort", onAbort, { once: true });
+    desktopDownloads.getStatus(jobId).then((payload) => {
+      if (payload) handler(payload);
+    }).catch(() => { /* Live progress events will report the result. */ });
+  });
+}
+
 export function initializeDownloader() {
   const form = document.querySelector("#download-form");
-  const piAddress = document.querySelector("#settings-pi-address");
+  if (!form) return;
+  const desktopRequired = document.querySelector("#download-desktop-required");
+  const desktopDownloads = window.puffinDesktop?.downloads;
+  if (!desktopDownloads) {
+    form.hidden = true;
+    if (desktopRequired) desktopRequired.hidden = false;
+    return;
+  }
+  form.hidden = false;
+  if (desktopRequired) desktopRequired.hidden = true;
+
   const youtubeUrl = document.querySelector("#youtube-url");
   const youtubeLinkField = document.querySelector("#youtube-link-field");
   const downloadLinkRow = document.querySelector("#download-link-row");
@@ -258,20 +205,17 @@ export function initializeDownloader() {
   let sourceTransition = null;
   let activeDownload = null;
 
-  cancelButton.addEventListener("click", async () => {
+  function cancelCurrentDownload() {
     if (!activeDownload) return;
     activeDownload.cancelled = true;
     cancelButton.disabled = true;
     setStatus(status, "Cancelling download and cleaning up…");
     activeDownload.controller?.abort();
-    if (activeDownload.baseUrl && activeDownload.jobId) {
-      try {
-        await cancelPiDownload(activeDownload.baseUrl, activeDownload.jobId);
-      } catch (error) {
-        setStatus(status, error.message || "Puffin could not confirm Pi cleanup.");
-      }
+    if (activeDownload.jobId) {
+      desktopDownloads.cancel(activeDownload.jobId).catch(() => { /* main process cleans stale jobs */ });
     }
-  });
+  }
+  cancelButton.addEventListener("click", cancelCurrentDownload);
 
   function setDownloadSource(source, { animate = false } = {}) {
     downloadSource = source;
@@ -388,12 +332,11 @@ export function initializeDownloader() {
     }
 
     youtubeSearchButton.disabled = true;
-    youtubeSearchStatus.textContent = "Searching YouTube…";
+    youtubeSearchStatus.textContent = "Searching YouTube on this device…";
     youtubeSearchResults.replaceChildren();
     try {
-      const baseUrl = getPiBaseUrl(piAddress.value);
-      const result = await requestJson(baseUrl, `/api/search?q=${encodeURIComponent(query)}`);
-      renderYouTubeResults(Array.isArray(result.videos) ? result.videos : []);
+      const videos = await desktopDownloads.search(query);
+      renderYouTubeResults(Array.isArray(videos) ? videos : []);
     } catch (error) {
       youtubeSearchStatus.textContent = error.message || "YouTube search failed.";
     } finally {
@@ -412,9 +355,9 @@ export function initializeDownloader() {
   });
   youtubeClearSelection.addEventListener("click", () => {
     youtubeUrl.value = "";
-      youtubeSelectedVideo.hidden = true;
-      selectedBrowseVideo = false;
-      youtubeSearchStatus.textContent = "";
+    youtubeSelectedVideo.hidden = true;
+    selectedBrowseVideo = false;
+    youtubeSearchStatus.textContent = "";
   });
   youtubeUrl.addEventListener("input", () => {
     if (downloadSource === "link") {
@@ -435,12 +378,8 @@ export function initializeDownloader() {
     searchYouTube();
   });
 
-  function applyDownloadPreferences() {
-    setDownloadSource(downloadSource);
-    setStatus(status, "");
-  }
-  window.addEventListener("puffin:download-preferences-updated", applyDownloadPreferences);
-  applyDownloadPreferences();
+  setDownloadSource("link");
+  setStatus(status, "");
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -452,94 +391,71 @@ export function initializeDownloader() {
         : "Enter a YouTube link or a search phrase.");
       return;
     }
-    // Keep the user's format choice stable while the asynchronous download,
-    // polling, and transfer steps run.
+
     const requestedKind = downloadKind.value;
     const selectedVideoHeight = videoHeightForSliderValue(videoQuality.value);
     const requestedVideoHeight = requestedKind === "video" ? selectedVideoHeight : null;
     submitButton.disabled = true;
     cancelButton.hidden = false;
     cancelButton.disabled = false;
-    activeDownload = { cancelled: false, controller: new AbortController() };
+    activeDownload = { cancelled: false, controller: new AbortController(), jobId: null };
     progress.hidden = false;
     progress.value = 0;
     progressDetails.hidden = false;
-    progressDetails.textContent = "Preparing download…";
+    progressDetails.textContent = "Preparing the on-device downloader…";
 
-    let baseUrl;
-    let jobId;
+    let jobId = null;
     let savedLocally = false;
-    let transferStarted = false;
 
     try {
-      baseUrl = getPiBaseUrl(piAddress.value);
       const capacity = await getMediaStorageCapacity();
       if (capacity.remainingBytes <= 0) {
         throw new Error("Puffin media storage limit reached. Delete files or raise the limit before downloading.");
       }
-      setStatus(status, "Connecting to the Pi…");
-      await checkPi(baseUrl, requestedVideoHeight);
-
-      const downloadTarget = /^https?:\/\//i.test(entered)
-        ? entered
-        : (entered.startsWith("ytsearch:") || entered.startsWith("ytsearch1:") ? entered : `ytsearch:${entered}`);
-      const job = await requestJson(baseUrl, "/api/downloads", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          url: downloadTarget,
-          kind: requestedKind,
-          video_height: selectedVideoHeight,
-          preferred_subtitle_language: navigator.language || "en",
-          supported_audio_formats: requestedKind === "audio" ? getSupportedAudioFormats() : [],
-        }),
+      setStatus(status, "Starting the on-device downloader…");
+      const job = await desktopDownloads.start({
+        target: entered,
+        kind: requestedKind,
+        videoHeight: selectedVideoHeight,
+        subtitleLanguage: navigator.language || "en",
       });
-      if (requestedVideoHeight !== null && job.requested_video_height !== requestedVideoHeight) {
-        await cancelPiDownload(baseUrl, job.id);
-        throw new Error("The Pi did not accept the selected video resolution. Update and restart the Pi downloader service, then retry.");
-      }
-      jobId = job.id;
-      activeDownload.baseUrl = baseUrl;
+      jobId = job.jobId;
       activeDownload.jobId = jobId;
-      if (activeDownload.cancelled) {
-        await cancelPiDownload(baseUrl, jobId);
-        throw new DOMException("Download cancelled.", "AbortError");
-      }
+      if (activeDownload.cancelled) throw new DOMException("Download cancelled.", "AbortError");
 
-      let currentJob = job;
-      while (["queued", "downloading", "converting"].includes(currentJob.status)) {
-        progress.value = currentJob.progress || 0;
-        const { label, detail } = describeDownloadStage(currentJob);
-        setStatus(status, label);
-        progressDetails.textContent = detail;
-
-        await sleep(1200);
-        currentJob = await requestJson(baseUrl, `/api/downloads/${jobId}`);
+      const ready = await waitForJob(desktopDownloads, jobId, {
+        signal: activeDownload.controller.signal,
+        onStage: (payload) => {
+          progress.value = Number(payload.progress) || 0;
+          const { label, detail } = describeDownloadStage(payload);
+          setStatus(status, label);
+          progressDetails.textContent = detail;
+        },
+      });
+      if (activeDownload.cancelled) throw new DOMException("Download cancelled.", "AbortError");
+      if (requestedKind === "video" && ready.kind !== "video") {
+        throw new Error("The downloader returned an audio file for a video request. Please retry.");
       }
-
-      if (currentJob.status !== "ready") {
-        throw new Error(currentJob.error || "The Pi download did not finish.");
+      if (requestedKind === "video" && !String(ready.mime || "").startsWith("video/")) {
+        throw new Error("The downloader did not produce a video file for this request.");
       }
-      if (requestedKind === "video" && currentJob.kind !== "video") {
-        throw new Error("The Pi returned an audio job for a video request. Please retry the download.");
-      }
-      if (requestedKind === "video" && !currentJob.mime_type?.startsWith("video/")) {
-        throw new Error("The Pi did not produce a video file for this request.");
+      if (requestedKind === "audio" && !String(ready.mime || "").startsWith("audio/")) {
+        throw new Error("The downloader did not produce an audio file for this request.");
       }
       if (requestedVideoHeight !== null) {
-        if (!Number.isInteger(currentJob.actual_video_height)) {
-          throw new Error("The Pi could not verify the downloaded video's resolution. Update and restart the Pi downloader service, then retry.");
+        if (!Number.isInteger(ready.height)) {
+          throw new Error("Puffin could not verify the downloaded video's resolution. Please retry.");
         }
-        if (currentJob.actual_video_height > requestedVideoHeight) {
-          throw new Error(`The Pi downloaded ${videoHeightLabel(currentJob.actual_video_height)}, above the selected ${videoHeightLabel(requestedVideoHeight)} maximum. The file was rejected.`);
+        if (ready.height > requestedVideoHeight) {
+          throw new Error(`Puffin downloaded ${ready.height}p, above the selected ${videoHeightLabel(requestedVideoHeight)} maximum. The file was rejected.`);
         }
       }
 
       try {
-        await guardReadyPiDownload({
-          fileSize: currentJob.size + (currentJob.subtitle_size || 0),
+        await guardReadyDownload({
+          fileSize: (Number(ready.size) || 0) + (Number(ready.subtitleSize) || 0),
           assertCapacity: assertMediaStorageCapacity,
-          cancelDownload: () => cancelPiDownload(baseUrl, jobId),
+          cancelDownload: () => desktopDownloads.cancel(jobId),
         });
       } catch (error) {
         jobId = null;
@@ -549,72 +465,53 @@ export function initializeDownloader() {
       progress.value = 100;
       const actualVideoDescription = requestedVideoHeight === null
         ? ""
-        : `${videoHeightLabel(currentJob.actual_video_height)} video (maximum ${videoHeightLabel(requestedVideoHeight)})`;
+        : `${videoHeightLabel(ready.height)} video (maximum ${videoHeightLabel(requestedVideoHeight)})`;
       progressDetails.textContent = `${actualVideoDescription ? `${actualVideoDescription} · ` : ""}Download complete · Saving to your Puffin library`;
-      setStatus(status, "Receiving file from the Pi…");
-      transferStarted = true;
-      const fileResponse = await fetch(`${baseUrl}/api/downloads/${jobId}/file`, { signal: activeDownload.controller.signal });
-      if (!fileResponse.ok) {
-        const payload = await responsePayload(fileResponse);
-        throw new Error(payload.error || `File transfer failed (${fileResponse.status}).`);
-      }
+      setStatus(status, "Copying the finished file into Puffin…");
+      const fileResponse = await fetch(`puffin-media://download/${encodeURIComponent(jobId)}`, { signal: activeDownload.controller.signal });
+      if (!fileResponse.ok) throw new Error(`Puffin could not copy the downloaded file (${fileResponse.status}).`);
 
-      const piMedia = await readDirectMedia(fileResponse, youtubeUrl.value.trim(), capacity, ({ received, total, speed, eta }) => {
+      const localMedia = await readDirectMedia(fileResponse, youtubeUrl.value.trim(), capacity, ({ received, total, speed, eta }) => {
         progress.value = total ? Math.min(100, (received / total) * 100) : 0;
         if (!total) progress.removeAttribute("value");
         else progress.setAttribute("value", String(progress.value));
         const amount = total ? `${formatBytes(received)} of ${formatBytes(total)}` : `${formatBytes(received)} received`;
         progressDetails.textContent = `${amount} · ${formatBytes(speed)}/s · ${eta === null ? "time remaining unavailable" : `${formatTime(eta)} remaining`}`;
-        setStatus(status, "Receiving file from the Pi…");
+        setStatus(status, "Copying the finished file into Puffin…");
       });
       if (activeDownload.cancelled) throw new DOMException("Download cancelled.", "AbortError");
       cancelButton.disabled = true;
-      const mediaBlob = piMedia.blob;
+      const mediaBlob = localMedia.blob;
       setStatus(status, "Saving to this device…");
-      const encodedName = fileResponse.headers.get("X-Download-Name");
-      let filename = piMedia.name || `puffin-download.${requestedKind === "audio" ? "m4a" : "mp4"}`;
-      if (encodedName) {
-        try {
-          filename = decodeURIComponent(encodedName);
-        } catch {
-          filename = encodedName;
-        }
-      } else if (currentJob.filename) {
-        filename = currentJob.filename;
-      }
+      let filename = localMedia.name || ready.filename || `puffin-download.${requestedKind === "audio" ? "m4a" : "mp4"}`;
       filename = removeLastBracketedPart(filename);
-      if (currentJob.kind === "video") filename = filename.replace(/\.f\d+(?=\.[^.]+$)/i, "");
+      if (ready.kind === "video") filename = filename.replace(/\.f\d+(?=\.[^.]+$)/i, "");
 
       try {
         if (navigator.storage?.persist) await navigator.storage.persist();
       } catch {
         // IndexedDB can still save the file when persistent storage is unavailable.
       }
-      const artwork = currentJob.kind === "video" ? await videoFrameArtwork(mediaBlob) : "";
+      const artwork = ready.kind === "video" ? await videoFrameArtwork(mediaBlob) : "";
       let subtitles = "";
-      if (currentJob.kind === "video" && currentJob.subtitles_available) {
+      if (ready.kind === "video" && ready.subtitlesAvailable) {
         try {
-          const subtitleResponse = await fetch(`${baseUrl}/api/downloads/${jobId}/subtitles`, { signal: activeDownload.controller.signal });
-          if (subtitleResponse.ok) {
-            const subtitleText = await subtitleResponse.text();
-            if (/^\uFEFF?WEBVTT(?:\s|$)/i.test(subtitleText)) subtitles = subtitleText;
-            else console.warn("The Pi returned an invalid WebVTT subtitle file.");
-          } else if (subtitleResponse.status !== 404) {
-            console.warn(`Could not receive subtitles from the Pi (${subtitleResponse.status}).`);
-          }
+          const subtitle = await desktopDownloads.getSubtitles(jobId);
+          const subtitleText = subtitle?.text || "";
+          if (/^\uFEFF?WEBVTT(?:\s|$)/i.test(subtitleText)) subtitles = subtitleText;
+          else console.warn("The on-device downloader returned an invalid WebVTT subtitle file.");
         } catch (subtitleError) {
           if (subtitleError.name === "AbortError") throw subtitleError;
-          console.warn("Could not receive subtitles from the Pi:", subtitleError);
+          console.warn("Could not read the downloaded subtitles:", subtitleError);
         }
-      } else if (currentJob.kind === "video") {
-        console.info("[Puffin download] The Pi found no downloadable WebVTT subtitles for this video.", { jobId });
       }
+
       const savedRecord = await saveMediaFile(mediaBlob, {
         name: filename,
-        type: currentJob.mime_type || mediaBlob.type,
+        type: ready.mime || mediaBlob.type,
         artwork,
         subtitles,
-        subtitleLanguage: currentJob.subtitle_language || "en",
+        subtitleLanguage: ready.subtitleLanguage || "en",
         rawTitle: filename.replace(/\.f\d+(?=\.[^.]+$)/i, "").replace(/\.[^.]+$/, ""),
       });
       if (savedRecord.kind === "audio") window.dispatchEvent(new CustomEvent("puffin:download-saved", { detail: savedRecord }));
@@ -622,32 +519,25 @@ export function initializeDownloader() {
       recordPuffinActivity("downloads").catch((statsError) => console.warn("Could not record completed download:", statsError));
       window.dispatchEvent(new Event("puffin:library-updated"));
 
-      const savedResolution = actualVideoDescription ? `${actualVideoDescription} ` : "";
       try {
-        const cleanedUp = await confirmPiSavedFile(baseUrl, jobId);
-        if (cleanedUp) setStatus(status, `Saved ${savedResolution}to your Puffin library on this device.`);
-        else setStatus(status, `Saved ${savedResolution}locally. The Pi will remove its temporary copy after it expires.`);
-      } catch {
-        setStatus(status, `Saved ${savedResolution}locally. The Pi could not confirm cleanup; its temporary copy will expire automatically.`);
+        await desktopDownloads.complete(jobId);
+        jobId = null;
+      } catch (cleanupError) {
+        console.warn("Puffin could not remove the temporary download:", cleanupError);
       }
+      const savedResolution = actualVideoDescription ? `${actualVideoDescription} ` : "";
+      setStatus(status, `Saved ${savedResolution}to your Puffin library on this device.`);
     } catch (error) {
       setStatus(status, activeDownload.cancelled || error.name === "AbortError" ? "Download cancelled. Partial transfer was discarded."
         : error.message || "The download failed.");
       if (jobId && !savedLocally && !activeDownload.cancelled && !(error instanceof MediaCapacityError)) {
         recordPuffinActivity("failedJobs", 1, error.message || "The download failed.").catch((statsError) => console.warn("Could not record download failure:", statsError));
       }
-      if (jobId && baseUrl && !savedLocally && !activeDownload.cancelled) {
-        if (transferStarted && error instanceof MediaCapacityError) {
-          try {
-            await cancelPiDownload(baseUrl, jobId);
-          } catch {
-            setStatus(status, `${error.message} The Pi could not confirm cleanup; its temporary copy will expire automatically.`);
-          }
-        } else if (transferStarted) {
-          // Keep completed files on the Pi for retry if transfer or browser storage fails.
-          setStatus(status, `${error.message || "The transfer failed."} The Pi will keep its temporary copy for up to one hour.`);
-        } else {
-          fetch(`${baseUrl}/api/downloads/${jobId}`, { method: "DELETE" }).catch(() => {});
+      if (jobId && !savedLocally) {
+        try {
+          await desktopDownloads.cancel(jobId);
+        } catch {
+          // The main process retries stale temporary files on the next launch.
         }
       }
     } finally {

@@ -1,6 +1,6 @@
 # Puffin
 
-Puffin is a music and video app for macOS and iOS. It is designed as a static Progressive Web App (PWA), hosted on Vercel, with an interface that adapts to desktop and mobile screens. Its main features are downloading, editing, playing, and tracking music and video.
+Puffin is a music and video app for macOS and Windows, with a companion website that runs as a Progressive Web App (PWA). The interface adapts to desktop and mobile screens. Its main features are downloading, editing, playing, and tracking music and video.
 
 ## Discover
 
@@ -36,19 +36,46 @@ Similarities are cached for 24 hours, artist metadata for 7 days, Fanart and rel
 
 Puffin never uploads the full library or raw listening history. A recommendation request contains at most 8 seed artists, up to 2 track titles per seed, coarse play and library counts, up to 40 artist names already in the library to exclude, and recent recommendation names to avoid repeating. Last.fm receives only the seed artist or track needed for a similarity lookup. Fanart.tv receives a MusicBrainz artist ID. MusicBrainz and Cover Art Archive receive artist IDs and release-group IDs. iTunes receives artist and album names for artwork fallback. All project keys stay on the server.
 
+## Desktop app
+
+Puffin is available as a standalone desktop app for macOS (Apple silicon and Intel) and Windows (x64). The website remains available at [puffin-iota.vercel.app](https://puffin-iota.vercel.app), but downloads run only in the desktop app, on the computer itself.
+
+- **Nothing else is required.** The app bundles its FFmpeg engine and installs its own `yt-dlp` engine on first use. There is no downloader server, private network, extra hardware, or account to configure.
+- **A separate local library.** The desktop app stores media in its own application storage. A browser library is not imported automatically, so you can keep using the website without mixing the two libraries.
+- **Built-in updates.** Puffin checks GitHub Releases quietly after launch and every six hours. A small dot on the Settings icon signals an update without covering the main screen. The update panel can check, download an installer in-app on Windows, or open the release page on macOS.
+- **Laptop-only website button.** On laptop and desktop browsers, a download button sits to the left of the connectivity icon and picks the correct macOS or Windows installer. Phones and tablets do not see it, and the app hides it once it is already running.
+
+Download the latest installer from [GitHub Releases](https://github.com/carsrock60/Puffin/releases/latest). macOS builds are arm64 for Apple silicon and x64 for Intel Macs, as a DMG with a ZIP fallback; Windows builds are x64 NSIS installers.
+
 ## Download
 
-Users can paste a YouTube link or search YouTube within Puffin. Search results show video thumbnails, titles, channels, and durations; users can preview a result in YouTube or select it for download. Audio downloads preserve the source audio format when the browser supports it, with AAC in M4A as a compatibility fallback. Video downloads use H.264 video and AAC audio in MP4 for browser compatibility. Available manual, automatic, and translated subtitles are saved with downloaded videos in the browser's preferred language when available, and can be toggled during playback.
+In the desktop app, users can paste a YouTube link or search YouTube without leaving Puffin. Search results show video thumbnails, titles, channels, and durations; selecting a result starts a download with a local progress display that can be cancelled at any time. Audio downloads preserve the source audio format when it is playable, with AAC in M4A as a compatibility fallback. Video downloads prefer H.264 video and AAC audio in MP4, and fall back to WebM when that is the only playable option. Available manual, automatic, and translated subtitles are saved with downloaded videos in the computer's preferred language when available, and can be toggled during playback.
 
 Downloads are intended for public-domain videos or users' own videos. Users are trusted to download only content they are authorized to download.
 
 ### Download workflow
 
-The PWA sends a download request to a private service running on a Raspberry Pi. The Pi runs `yt-dlp`, temporarily stores the downloaded file, and streams it to the device that requested it. Puffin saves the file in that device's browser storage for offline playback. After Puffin confirms that the local save succeeded, the Pi deletes its temporary copy. The Pi has approximately 18 GB of available storage for temporary files.
+1. The desktop app resolves the link or search with its bundled `yt-dlp` engine, downloading the engine on first use if it is not already present.
+2. `yt-dlp` downloads video, audio, and WebVTT subtitles into a private temporary folder. FFmpeg merges the selected streams into a playable container.
+3. The app verifies the video's actual height against the selected maximum, then streams the finished file over a private in-app protocol into Puffin's library.
+4. The temporary folder is removed after the library save succeeds. Interrupted downloads are cleaned up on the next launch.
 
-The Raspberry Pi service is intended to be reachable only over a private network. Tailscale must be installed and connected on the Pi and on each Mac or iPhone that will request downloads. If the Pi or private connection is unavailable, new downloads cannot be requested; files already saved on a device remain available offline.
+The download engine runs entirely on the computer. Nothing is uploaded to Puffin, and no other device is contacted.
 
-The Pi service setup, including Raspberry Pi OS commands, Tailscale Serve, and an optional systemd service for automatic startup, is documented in [pi-service/README.md](pi-service/README.md). Set `PUFFIN_ALLOWED_ORIGINS` there to the exact Vercel deployment origin and any local development origin you use. The Pi stores downloads only temporarily; Puffin stores each completed file in the requesting device's browser storage.
+### Build and release
+
+```sh
+cd web && npm install && npm run build
+cd ../desktop && npm install
+npm start             # build the web app and launch the desktop shell
+npm run dist:mac      # Apple silicon ZIP and DMG
+npm run dist:mac:intel # Intel ZIP and DMG
+npm run dist:win      # Windows x64 NSIS installer
+```
+
+Installers are written to `desktop/release/` with names the website installer picker understands: `Puffin-<version>-arm64.dmg` (or `.zip` fallback), `Puffin-<version>-x64.dmg` (or `.zip`), and `Puffin-Setup-<version>-x64.exe`. Build each installer on matching hardware: `ffmpeg-static` installs a native binary for the host. The release workflow in `.github/workflows/desktop-release.yml` runs tests and builds on matching Apple silicon, Intel Mac, and Windows runners whenever a `v*` tag is pushed. macOS builds check GitHub Releases and open the download page, because unsigned apps cannot install updates themselves; Windows installs can download and run the new NSIS installer in-app. Code-signing both platforms later removes the Gatekeeper and SmartScreen warnings.
+
+The desktop shell serves the built website over a privileged `puffin://` protocol, proxies Discover and Smart Fill requests to the hosted Puffin service, and uses `puffin-media://` only for the short handoff from the temporary download to the local library.
 
 ## Edit
 
@@ -66,7 +93,7 @@ The Watch page gathers videos saved in the device's Puffin library. It features 
 
 ## Play
 
-The Play tab provides the local library and playlists, with the compact player focused on music. Pi downloads preserve a browser-supported source audio format where possible, with AAC in M4A as a compatibility fallback. Files imported from the device are kept in their original format; browser playback depends on the codecs the browser supports. Users can create, rename, and delete playlists, add or remove local media, and pin playlists to the top. Playlist data and media files are stored on the device. It includes a 10-band equalizer with:
+The Play tab provides the local library and playlists, with the compact player focused on music. Desktop downloads preserve a playable source audio format where possible, with AAC in M4A as a compatibility fallback. Files imported from the device are kept in their original format; playback depends on the codecs the computer supports. Users can create, rename, and delete playlists, add or remove local media, and pin playlists to the top. Playlist data and media files are stored on the device. It includes a 10-band equalizer with:
 
 - **Multiple bands:** Support five to ten or more bands, covering core hearing ranges from sub-bass (20–60 Hz) to treble and air (8–16+ kHz). A 10-band graphic equalizer offers a balance between control and simplicity.
 - **Preset profiles:** Quick-start modes such as Hip Hop, Rock, Pop, Classical, Vocal Boost, and Flat.

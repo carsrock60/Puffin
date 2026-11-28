@@ -10,7 +10,3 @@ export function videoQualityLabel(value) {
   const height = videoHeightForSliderValue(value);
   return height === 2160 ? "4K" : `${height}p`;
 }
-
-export function piSupportsVideoQuality(health, height) {
-  return Array.isArray(health?.video_quality_options) && health.video_quality_options.includes(height);
-}

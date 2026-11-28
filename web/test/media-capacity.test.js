@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { assertMediaFits, getMediaCapacityState, guardReadyPiDownload } from "../src/media-capacity.js";
+import { assertMediaFits, getMediaCapacityState, guardReadyDownload } from "../src/media-capacity.js";
 
 test("imports may use the last byte of the configured media limit", () => {
   const state = assertMediaFits(900, 1000, 100);
@@ -23,10 +23,10 @@ test("an over-limit existing library rejects additional imports", () => {
   assert.throws(() => assertMediaFits(state.usedBytes, state.limitBytes, 1), /Not enough Puffin media storage/);
 });
 
-test("a Pi download that will not fit is cancelled before transfer", async () => {
+test("a finished download that will not fit is cancelled before transfer", async () => {
   let cancelled = false;
   await assert.rejects(
-    guardReadyPiDownload({
+    guardReadyDownload({
       fileSize: 101,
       assertCapacity: async () => { throw new Error("Media limit reached"); },
       cancelDownload: async () => { cancelled = true; },
@@ -37,9 +37,9 @@ test("a Pi download that will not fit is cancelled before transfer", async () =>
   assert.equal(cancelled, true);
 });
 
-test("a Pi download that fits is allowed and is not cancelled", async () => {
+test("a finished download that fits is allowed and is not cancelled", async () => {
   let cancelled = false;
-  await guardReadyPiDownload({
+  await guardReadyDownload({
     fileSize: 100,
     assertCapacity: async () => ({ remainingBytes: 100 }),
     cancelDownload: async () => { cancelled = true; },
@@ -48,13 +48,13 @@ test("a Pi download that fits is allowed and is not cancelled", async () => {
   assert.equal(cancelled, false);
 });
 
-test("Pi cleanup problems are included in the capacity error", async () => {
+test("cleanup problems are included in the capacity error", async () => {
   await assert.rejects(
-    guardReadyPiDownload({
+    guardReadyDownload({
       fileSize: 101,
       assertCapacity: async () => { throw new Error("Media limit reached"); },
       cancelDownload: async () => { throw new Error("Network unavailable"); },
     }),
-    /temporary copy will expire automatically/,
+    /temporary download immediately/,
   );
 });

@@ -78,7 +78,9 @@ button, a { font: inherit; }
 .nav-button { display: flex; width: 100%; min-width: 0; align-items: center; gap: 12px; min-height: 46px; padding: 0 12px; color: var(--text); background: transparent; border: 0; border-radius: var(--control-radius); cursor: pointer; text-align: left; font-size: .95rem; font-weight: 500; line-height: 1.3; white-space: nowrap; }
 .nav-button:hover { color: var(--text); background: var(--page); }
 .nav-button[aria-current="page"] { color: var(--accent); background: var(--accent-soft); font-weight: 650; }
-.nav-icon { display: inline-grid; width: 22px; height: 22px; flex: 0 0 22px; place-items: center; }
+.nav-icon { position: relative; display: inline-grid; width: 22px; height: 22px; flex: 0 0 22px; place-items: center; }
+.update-dot { position: absolute; top: -2px; right: -3px; display: block; width: 8px; height: 8px; border: 2px solid var(--surface); border-radius: 50%; background: var(--accent); pointer-events: none; }
+.update-dot[hidden] { display: none; }
 .nav-icon svg { display: block; width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .sidebar-bottom { margin-top: auto; padding-top: 12px; border-top: 1px solid var(--border); }
 .settings-nav-button { min-height: 46px; }
@@ -132,6 +134,11 @@ button, a { font: inherit; }
 .connection-status { display: grid; width: 40px; height: 40px; margin-right: 8px; place-items: center; color: #268b59; }
 .connection-status svg { width: 23px; height: 23px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .connection-status.is-offline { color: #c94a4a; }
+.desktop-install-button { margin-right: 2px; }
+.desktop-install-button svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.desktop-install-button[hidden] { display: none; }
+.desktop-install-button.is-downloading { color: var(--accent); }
+@media (max-width: 899px), (pointer: coarse) { .desktop-install-button { display: none !important; } }
 
 main {
   display: block;
@@ -333,6 +340,12 @@ html.dark .quick-play-card::after, html.dark .recent-song-button::after { backgr
 .library-heading { margin: 28px 0 12px; font-size: 1.1rem; }
 
 .download-form { display: grid; gap: 18px; max-width: 760px; margin-top: 24px; }
+.download-form[hidden], .download-desktop-required[hidden], .desktop-install-action[hidden] { display: none; }
+.download-desktop-required { display: grid; max-width: 620px; gap: 14px; margin-top: 24px; padding: 24px 26px; background: var(--surface); border: 1px solid var(--border); border-radius: 22px; }
+.download-desktop-required h2 { margin: 0; font-size: 1.35rem; letter-spacing: -0.03em; }
+.download-desktop-required p { margin: 0; color: var(--muted); line-height: 1.65; }
+.download-desktop-required .primary-button { justify-self: start; margin-top: 4px; }
+.download-desktop-required .desktop-install-action + p { font-size: .84rem; }
 .download-link-row { display: grid; grid-template-columns: minmax(0, 1fr) 170px; align-items: end; gap: 12px; }
 .video-quality { display: grid; gap: 8px; color: var(--muted); font-size: .9rem; font-weight: 600; }
 .video-quality output { float: right; color: var(--text); }
@@ -370,7 +383,6 @@ html.dark .quick-play-card::after, html.dark .recent-song-button::after { backgr
 .youtube-result-formats { display: flex; gap: 5px; }
 .youtube-result-formats[hidden] { display: none; }
 .youtube-result-formats button { min-height: 34px; padding: 0 9px; font-size: .78rem; }
-.pi-connection-row { display: flex; align-items: flex-end; gap: 10px; }
 .form-field { display: grid; flex: 1; gap: 7px; min-width: 0; color: var(--muted); font-size: 0.9rem; font-weight: 600; }
 .form-field input, .form-field select {
   width: 100%;
@@ -942,6 +954,17 @@ html.dark .player-bar { background: rgba(30, 36, 40, 0.84); box-shadow: 0 -10px 
 .settings-clear-history .danger-button:hover { background: #ffe4e6; }
 .settings-clear-history .danger-button:disabled { opacity: .55; cursor: wait; }
 .settings-actions { display: flex; gap: 10px; margin-top: 22px; }
+.settings-download-facts { margin-top: 20px; }
+.settings-update-card { display: grid; max-width: 620px; gap: 12px; margin-top: 20px; padding: 18px 20px; background: var(--surface); border: 1px solid var(--border); border-radius: 18px; }
+.settings-update-summary { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
+.settings-update-label { color: var(--muted); font-size: .84rem; }
+.settings-update-summary strong { font-size: .95rem; text-align: right; }
+.settings-update-card progress { width: 100%; height: 8px; accent-color: var(--accent); }
+.settings-update-card progress[hidden] { display: none; }
+.settings-update-card p:empty { display: none; }
+.settings-update-auto { margin-top: 20px; }
+.settings-update-link { display: inline-block; margin-top: 12px; color: var(--accent); font-size: .88rem; font-weight: 600; }
+[data-desktop-only][hidden] { display: none !important; }
 .settings-dialog button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 html.dark .settings-capacity-warning { color: #ffd7da; background: #48282b; border-color: #704047; }
 
@@ -1107,7 +1130,6 @@ html[data-reduce-motion="true"] .edit-enrichment-status.is-working { animation: 
   .playlist-list { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
   .playlist-view-heading { align-items: flex-start; }
   .playlist-dialog form { padding: 22px; }
-  .pi-connection-row { align-items: stretch; flex-direction: column; }
   .download-link-row { grid-template-columns: minmax(0, 1fr) 120px; gap: 8px; }
   .download-form > .primary-button { width: 100%; }
   .youtube-search-row { align-items: stretch; flex-direction: column; }

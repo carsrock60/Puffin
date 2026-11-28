@@ -7,7 +7,6 @@ import {
 } from "./library.js";
 import { formatBytes, getMediaCapacityState } from "./media-capacity.js";
 import { getHomePreferences, saveHomePreferences } from "./home-preferences.js";
-import { getDownloadPreferences, saveDownloadPreferences } from "./download-preferences.js";
 
 export function initializeSettings() {
   const dialog = document.querySelector("#settings-dialog");
@@ -31,18 +30,17 @@ export function initializeSettings() {
   const acoustidRemove = document.querySelector("#settings-acoustid-remove");
   const acoustidStatus = document.querySelector("#settings-acoustid-status");
   const clearHistoryButton = document.querySelector("#settings-clear-history");
-  const piOptions = document.querySelector("#settings-pi-options");
-  const piAddress = document.querySelector("#settings-pi-address");
-  const checkPiButton = document.querySelector("#settings-check-pi");
+  const downloadEngine = document.querySelector("#settings-download-engine");
+  const clearDownloadCache = document.querySelector("#settings-clear-download-cache");
   const downloadStatus = document.querySelector("#settings-download-status");
+  const desktopDownloadPanel = document.querySelector("#settings-download-desktop");
+  const webDownloadPanel = document.querySelector("#settings-download-web");
+  const desktopDownloads = window.puffinDesktop?.downloads;
   let currentLibraryBytes = 0;
 
   const homePreferences = getHomePreferences();
   showRecent.checked = homePreferences.showRecentlyPlayed;
   acoustidKey.value = homePreferences.acoustidClientKey;
-  const downloadPreferences = getDownloadPreferences();
-  piAddress.value = downloadPreferences.piAddress;
-  piOptions.hidden = false;
 
   mediaLimitInput.value = (getMediaStorageLimit() / 1024 ** 3).toFixed(1);
 
@@ -140,36 +138,35 @@ export function initializeSettings() {
     persistHomeVisibility();
     acoustidStatus.textContent = "AcoustID key removed from this browser.";
   });
-  function persistDownloadPreferences() {
-    try {
-      saveDownloadPreferences({ piAddress: piAddress.value });
-      downloadStatus.textContent = "Download settings saved on this device.";
-    } catch {
-      downloadStatus.textContent = "Puffin could not save download settings on this device.";
-    }
-  }
-  piAddress.addEventListener("change", persistDownloadPreferences);
-  checkPiButton.addEventListener("click", async () => {
-    checkPiButton.disabled = true;
-    try {
-      const parsed = new URL(piAddress.value.trim());
-      if (parsed.protocol !== "https:" || parsed.pathname !== "/" || parsed.search || parsed.hash || parsed.username || parsed.password) {
-        throw new Error("Enter the Pi's HTTPS Tailscale Serve address.");
+  if (desktopDownloads) {
+    if (webDownloadPanel) webDownloadPanel.hidden = true;
+    if (desktopDownloadPanel) desktopDownloadPanel.hidden = false;
+    desktopDownloads.getInfo()
+      .then((info) => {
+        if (!downloadEngine) return;
+        const parts = [info?.engine || "yt-dlp", info?.ffmpeg ? "FFmpeg" : ""].filter(Boolean);
+        downloadEngine.textContent = `${parts.join(" · ")} running locally on this device.`;
+      })
+      .catch(() => {
+        if (downloadEngine) downloadEngine.textContent = "The on-device downloader is not ready yet. It starts on the first download.";
+      });
+    clearDownloadCache?.addEventListener("click", async () => {
+      clearDownloadCache.disabled = true;
+      try {
+        const result = await desktopDownloads.clearTemp();
+        downloadStatus.textContent = result?.removed
+          ? `Cleared ${result.removed} temporary ${result.removed === 1 ? "folder" : "folders"}.`
+          : "There are no temporary download files to clear.";
+      } catch (error) {
+        downloadStatus.textContent = error?.message || "Puffin could not clear temporary download files.";
+      } finally {
+        clearDownloadCache.disabled = false;
       }
-      const response = await fetch(`${parsed.origin}/api/health`);
-      if (!response.ok) throw new Error(`Pi returned ${response.status}.`);
-      const health = await response.json();
-      if (!health.ok) throw new Error("The Pi service did not return a healthy status.");
-      saveDownloadPreferences({ piAddress: piAddress.value });
-      downloadStatus.textContent = "Pi is connected and ready.";
-    } catch (error) {
-      downloadStatus.textContent = error.message === "Failed to fetch"
-        ? "Could not reach the Pi. Check Tailscale, its HTTPS address, and allowed origins."
-        : error.message || "Could not reach the Pi.";
-    } finally {
-      checkPiButton.disabled = false;
-    }
-  });
+    });
+  } else {
+    if (desktopDownloadPanel) desktopDownloadPanel.hidden = true;
+    if (webDownloadPanel) webDownloadPanel.hidden = false;
+  }
   clearHistoryButton.addEventListener("click", async () => {
     if (!window.confirm("Clear all recently played history on this device?")) return;
     clearHistoryButton.disabled = true;

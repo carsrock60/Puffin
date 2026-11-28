@@ -1,0 +1,88 @@
+{
+  "name": "puffin-desktop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Puffin desktop app with on-device media downloads",
+  "author": "Puffin",
+  "license": "UNLICENSED",
+  "main": "src/main.js",
+  "scripts": {
+    "build:web": "npm --prefix ../web run build",
+    "start": "npm run build:web && electron .",
+    "dev": "npm run build:web && electron .",
+    "pack": "npm run build:web && electron-builder --dir",
+    "dist": "npm run build:web && electron-builder",
+    "dist:mac": "npm run build:web && electron-builder --mac --arm64",
+    "dist:mac:intel": "npm run build:web && electron-builder --mac --x64",
+    "dist:win": "npm run build:web && electron-builder --win --x64",
+    "test": "node --test test/download-plan.test.js test/version.test.js"
+  },
+  "dependencies": {
+    "electron-updater": "^6.6.2",
+    "ffmpeg-static": "^5.2.0"
+  },
+  "devDependencies": {
+    "electron": "^39.0.0",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "com.puffin.player",
+    "productName": "Puffin",
+    "copyright": "Copyright © 2025 Puffin",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../web/dist",
+        "to": "web",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "asarUnpack": [
+      "node_modules/ffmpeg-static/**"
+    ],
+    "mac": {
+      "category": "public.app-category.music",
+      "target": [
+        "zip",
+        "dmg"
+      ],
+      "icon": "build/icon.png",
+      "artifactName": "Puffin-${version}-${arch}.${ext}",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false
+    },
+    "dmg": {
+      "title": "Puffin ${version}"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "build/icon.png",
+      "artifactName": "Puffin-Setup-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false,
+      "shortcutName": "Puffin"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "carsrock60",
+        "repo": "Puffin"
+      }
+    ]
+  }
+}
