@@ -6,7 +6,11 @@ export function videoHeightForSliderValue(value) {
   return VIDEO_QUALITIES[index];
 }
 
+export function videoHeightLabel(height) {
+  const pixels = Number(height);
+  return pixels === 2160 ? "4K" : `${pixels}p`;
+}
+
 export function videoQualityLabel(value) {
-  const height = videoHeightForSliderValue(value);
-  return height === 2160 ? "4K" : `${height}p`;
+  return videoHeightLabel(videoHeightForSliderValue(value));
 }

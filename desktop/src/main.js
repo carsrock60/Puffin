@@ -218,8 +218,8 @@ function createWindow() {
     minWidth: 940,
     minHeight: 640,
     show: false,
+    frame: false,
     backgroundColor: "#101214",
-    title: "Puffin",
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),

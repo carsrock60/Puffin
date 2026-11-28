@@ -1,7 +1,7 @@
 import { assertMediaStorageCapacity, getMediaStorageCapacity, recordPuffinActivity, saveMediaFile } from "./library.js";
 import { describeDownloadStage } from "./download-stage.js";
 import { formatBytes, guardReadyDownload, MediaCapacityError } from "./media-capacity.js";
-import { videoHeightForSliderValue, videoQualityLabel } from "./video-quality.js";
+import { videoHeightForSliderValue, videoHeightLabel, videoQualityLabel } from "./video-quality.js";
 import { animateElement, MOTION_EASE } from "./motion.js";
 
 function setStatus(element, message) {
